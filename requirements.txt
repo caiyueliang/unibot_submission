@@ -1,0 +1,4 @@
+# Runtime dependencies for the bundled reference implementation.
+numpy
+msgpack
+websockets
