@@ -1,15 +1,15 @@
-"""Websocket transport for driving a policy across a network.
+"""通过 WebSocket 在网络两端调用策略（policy）的传输层。
 
-A *policy* here is any object exposing three members:
+这里的 *policy* 指任何同时暴露下面三个成员的对象：
 
-    policy.metadata           -> dict describing the obs / action contract
-    policy.get_action(obs)    -> dict of action chunks for one observation
-    policy.reset()            -> drop whatever per-episode state it holds
+    policy.metadata           -> dict，描述观测 / 动作的数据契约
+    policy.get_action(obs)    -> dict，输入一段观测后返回一段动作
+    policy.reset()            -> 清空每个 episode 级别的内部状态
 
-``PolicyService`` wraps such an object and publishes it over websocket; the
-compute-heavy side can then run on one machine while ``RemotePolicy`` connects
-from another and is used exactly like a local policy. Numpy arrays and scalars
-cross the wire as msgpack via a small custom hook.
+``PolicyService`` 负责把本地 policy 包装成 WebSocket 服务；模型推理等
+计算较重的部分可以部署在一台机器上，而 ``RemotePolicy`` 可以从另一台机器
+连接过去，并像调用本地 policy 一样调用远端策略。网络上传输的数据使用
+msgpack 编码；numpy 数组和 numpy 标量通过本文件里的自定义 hook 转换。
 """
 
 from __future__ import annotations
@@ -36,20 +36,20 @@ log = logging.getLogger(__name__)
 #  Numpy <-> msgpack                                                           #
 # --------------------------------------------------------------------------- #
 #
-# msgpack has no built-in representation for numpy values, so two hooks bridge
-# the gap. An ndarray is written as its raw buffer together with its dtype and
-# shape, and rebuilt from exactly those three on the way back; a numpy scalar
-# is written using its underlying Python value. Dtypes whose bytes would not
-# round-trip cleanly (object, void, complex) are rejected up front.
+# msgpack 本身不知道如何表示 numpy.ndarray / numpy 标量，所以这里定义两个
+# hook 做“编码前转换”和“解码后还原”。数组会被拆成三部分：原始字节、dtype、
+# shape；接收端再用这三部分精确重建数组。numpy 标量则先转成 Python 原生值。
+# object / void / complex 这类 dtype 很难保证跨进程、跨语言稳定还原，因此提前拒绝。
 
-_OPAQUE_KINDS = frozenset("OVc")  # object / void / complex
+_OPAQUE_KINDS = frozenset("OVc")  # numpy dtype.kind: object / void / complex
 
 
 def _to_portable(value):
-    """``default`` hook: convert numpy arrays and scalars into msgpack-friendly maps."""
+    """msgpack 的 ``default`` hook：把 numpy 值转换成 msgpack 可编码的字典。"""
     if isinstance(value, (np.ndarray, np.generic)) and value.dtype.kind in _OPAQUE_KINDS:
         raise ValueError(f"cannot serialize values of dtype {value.dtype!r}")
     if isinstance(value, np.ndarray):
+        # ndarray 不能直接 msgpack，因此显式保存字节内容、dtype 字符串和 shape。
         return {
             b"__ndarray__": True,
             b"data": value.tobytes(),
@@ -57,6 +57,7 @@ def _to_portable(value):
             b"shape": value.shape,
         }
     if isinstance(value, np.generic):
+        # numpy scalar 转成 Python 标量，同时保留 dtype，避免 int/float 精度信息丢失。
         return {
             b"__npgeneric__": True,
             b"data": value.item(),
@@ -66,33 +67,38 @@ def _to_portable(value):
 
 
 def _from_portable(obj):
-    """``object_hook``: rebuild the numpy values encoded by :func:`_to_portable`."""
+    """msgpack 的 ``object_hook``：把 ``_to_portable`` 编码过的 numpy 值还原回来。"""
     if b"__ndarray__" in obj:
+        # buffer 指向 msgpack 解出来的 bytes；dtype 和 shape 保证数组布局与发送端一致。
         return np.ndarray(
             shape=obj[b"shape"],
             dtype=np.dtype(obj[b"dtype"]),
             buffer=obj[b"data"],
         )
     if b"__npgeneric__" in obj:
+        # 用保存下来的 dtype 类型包装 data，恢复成 numpy scalar。
         return np.dtype(obj[b"dtype"]).type(obj[b"data"])
     return obj
 
 
 class _Channel:
-    """msgpack codec for a single connection.
+    """单条连接使用的 msgpack 编解码器。
 
-    ``Packer`` keeps internal state and is meant to be reused, so every
-    connection holds its own; decoding is stateless and stays a function.
+    ``Packer`` 内部会维护状态，官方也建议复用；因此每条连接都持有自己的
+    ``_Channel``。解码没有状态，直接用 ``unpackb`` 即可。
     """
 
     def __init__(self) -> None:
+        # default 指向 _to_portable，让 msgpack 在遇到 numpy 值时自动走自定义转换。
         self._packer = msgpack.Packer(default=_to_portable)
 
     def freeze(self, obj) -> bytes:
+        """把 Python 对象编码成可通过 WebSocket 发送的 bytes。"""
         return self._packer.pack(obj)
 
     @staticmethod
     def thaw(blob):
+        """把 WebSocket 收到的 bytes 解码回 Python 对象。"""
         return msgpack.unpackb(blob, object_hook=_from_portable)
 
 
@@ -102,14 +108,14 @@ class _Channel:
 
 
 class RemotePolicy:
-    """A local-looking handle to a policy that actually lives over a socket.
+    """远端 policy 的本地代理对象。
 
-    Building one blocks until the server answers and its opening metadata frame
-    lands; from then on ``get_action`` and ``reset`` are normal method calls
-    that simply happen to make a round trip on the wire.
+    构造 ``RemotePolicy`` 时会阻塞等待服务端连接成功，并读取服务端发来的第一帧
+    metadata。之后调用 ``get_action`` / ``reset`` 看起来像普通方法调用，实际会
+    通过 WebSocket 做一次请求-响应往返。
     """
 
-    _RECONNECT_GAP = 5  # seconds between connection attempts while waiting
+    _RECONNECT_GAP = 5  # 连接被拒绝时，两次重试之间等待的秒数
 
     def __init__(
         self,
@@ -124,8 +130,7 @@ class RemotePolicy:
 
     @staticmethod
     def _resolve_uri(host: str, port: int | None) -> str:
-        # If the caller already gave a ws:// address, use it unchanged;
-        # otherwise build one from the host and append the port when present.
+        # 如果调用方已经给了 ws:// 或 wss:// 完整地址，就直接使用；否则用 host/port 拼接。
         base = host if host.startswith("ws") else f"ws://{host}"
         return base if port is None else f"{base}:{port}"
 
@@ -134,8 +139,8 @@ class RemotePolicy:
         return self._metadata
 
     def _handshake(self):
-        # Keep retrying until the connection succeeds; the first frame the
-        # server sends back is its metadata, which we hold onto.
+        # 一直重试直到连接成功；连接建立后服务端发送的第一帧就是 metadata。
+        # api_key 如果存在，会放入 Authorization 头，便于外层网关做鉴权。
         auth = {"Authorization": f"Api-Key {self._api_key}"} if self._api_key else None
         log.info("connecting to policy server at %s", self._uri)
         while True:
@@ -150,13 +155,13 @@ class RemotePolicy:
                 )
                 return socket, self._channel.thaw(socket.recv())
             except ConnectionRefusedError:
+                # 服务端可能还在启动中；这里不直接失败，而是持续等待。
                 log.info("server not up yet; retrying in %ss", self._RECONNECT_GAP)
                 time.sleep(self._RECONNECT_GAP)
 
     def _request(self, payload: dict):
-        # One request out, one response back. A response delivered as text
-        # rather than binary signals the handler failed, so turn it into a
-        # raised exception locally.
+        # 请求和响应是一一对应的同步往返：发送 msgpack bytes，等待服务端回复。
+        # 正常回复是二进制帧；如果收到文本帧，约定为服务端 traceback，转成本地异常。
         self._socket.send(self._channel.freeze(payload))
         reply = self._socket.recv()
         if isinstance(reply, str):
@@ -164,9 +169,11 @@ class RemotePolicy:
         return self._channel.thaw(reply)
 
     def get_action(self, obs: dict) -> dict:
+        """把观测发送到远端 policy，并返回远端算出的动作 chunk。"""
         return self._request({"type": "get_action", "obs": obs})
 
     def reset(self):
+        """通知远端 policy 重置 episode 状态。"""
         return self._request({"type": "policy_reset"})
 
 
@@ -176,13 +183,12 @@ class RemotePolicy:
 
 
 class PolicyService:
-    """Publish one local policy on a websocket endpoint.
+    """把一个本地 policy 发布为 WebSocket 服务。
 
-    Every client first receives the metadata map, msgpack-encoded. From there
-    the client steers the policy by sending request maps stamped with a
-    ``type`` field; the matching action runs and its result goes straight back.
-    If a handler raises, the client is handed the traceback as a plain text
-    frame and the connection is closed with an error status.
+    每个客户端连上来后，服务端会先发送 msgpack 编码的 metadata。之后客户端通过
+    带 ``type`` 字段的请求字典来驱动 policy：``get_action`` 调用推理，
+    ``policy_reset`` 重置状态。若 handler 抛异常，服务端会先把 traceback 作为
+    文本帧发给客户端，再用错误状态码关闭连接，方便客户端侧看到真实错误原因。
     """
 
     def __init__(
@@ -195,10 +201,9 @@ class PolicyService:
         self._policy = policy
         self._host = host
         self._port = port
-        # Begin with the optional metadata argument and layer the policy's own
-        # metadata on top, so the policy wins wherever the two overlap.
+        # 先放入外部传入的 metadata，再叠加 policy.metadata；如果 key 冲突，以 policy 为准。
         self._metadata = {**(metadata or {}), **policy.metadata}
-        # request "type" string -> handler callable
+        # 请求中的 "type" 字符串 -> 实际处理函数。
         self._routes = {
             "get_action": lambda req: self._policy.get_action(req["obs"]),
             "policy_reset": lambda req: self._policy.reset(),
@@ -206,7 +211,7 @@ class PolicyService:
         logging.getLogger("websockets.server").setLevel(logging.INFO)
 
     def run_forever(self) -> None:
-        """Serve clients on the calling thread until interrupted."""
+        """在当前线程启动服务，持续运行直到进程被中断。"""
         asyncio.run(self._serve())
 
     async def _serve(self) -> None:
@@ -216,9 +221,8 @@ class PolicyService:
             self._port,
             compression=None,
             max_size=None,
-            # Keepalive pings are turned off on both sides. A single request
-            # can keep the handler busy longer than the default ping interval,
-            # and we don't want that slow turnaround mistaken for a dead peer.
+            # 两端都关闭 keepalive ping。一次模型推理可能比默认 ping 间隔更久，
+            # 不希望慢请求被误判成连接断开。
             ping_interval=None,
             ping_timeout=None,
             process_request=_liveness_probe,
@@ -230,22 +234,23 @@ class PolicyService:
         log.info("client %s connected", who)
         channel = _Channel()
 
-        # Send the metadata map before handling any requests.
+        # 连接建立后先发 metadata，让客户端知道 obs/action 的数据契约。
         await socket.send(channel.freeze(self._metadata))
 
         try:
             async for frame in socket:
+                # 每个客户端请求都是一个 msgpack 二进制帧，解码后根据 type 分发。
                 request = channel.thaw(frame)
                 kind = request.get("type")
                 route = self._routes.get(kind)
                 if route is None:
                     raise ValueError(f"unrecognized request type: {kind!r}")
+                # handler 返回值同样用 msgpack 编码为二进制帧发回客户端。
                 await socket.send(channel.freeze(route(request)))
         except ConnectionClosed:
             log.info("client %s disconnected", who)
         except Exception:
-            # Hand the failure text back to the client so the caller can see
-            # what happened, then close the connection and re-raise here.
+            # 把服务端 traceback 发回客户端，便于远端调用者定位错误；随后关闭连接并重新抛出。
             await socket.send(traceback.format_exc())
             await socket.close(
                 code=CloseCode.INTERNAL_ERROR,
@@ -255,8 +260,8 @@ class PolicyService:
 
 
 def _liveness_probe(connection, request):
-    """Answer a plain HTTP GET on the liveness path; any other request
-    continues into the normal websocket upgrade."""
+    """响应健康检查 HTTP GET；其他请求继续走正常 WebSocket upgrade 流程。"""
     if request.path == "/healthz":
+        # 允许外部探针用 http://host:port/healthz 判断服务是否存活。
         return connection.respond(http.HTTPStatus.OK, "OK\n")
     return None
