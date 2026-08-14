@@ -38,10 +38,15 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
 
     # 先通知服务端重置内部状态，再让本地假环境生成第一段 observation。
     client.reset()
+    print(f"client.reset() -> server reset done")
     obs = env.reset()
+    print(f"env.reset() -> first observation: {obs}")
     for i in range(n_steps):
         # 发送 observation 到远端 policy，拿回一段 action chunk。
+
+        # print(f"[{i}/{n_steps}] obs: {obs}")
         action = client.get_action(obs)
+        # print(f"[{i}/{n_steps}] action: {action}; obs: {obs}")
         try:
             # env.step 会严格检查 action 的 key、shape、dtype 和 token。
             obs = env.step(action)
@@ -51,7 +56,9 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
         # 打印动作 key 和 shape，方便本地确认当前控制空间输出是否符合预期。
         action_keys = [k for k in action if not k.startswith("meta.")]
         shapes = ", ".join(f"{k}={tuple(action[k].shape)}" for k in action_keys)
+        
         print(f"[step {i}] OK — token verified, {len(action_keys)} action keys: {shapes}")
+
     print("\nAll steps passed validation.")
 
 
