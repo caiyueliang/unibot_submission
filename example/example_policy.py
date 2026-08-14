@@ -34,11 +34,11 @@ class ExamplePolicy:
         "observation.images.cam_right_wrist",            # 右手腕相机图像，单帧形状 [480, 640, 3]，HWC，RGB，uint8。
         "observation.state.left_arm",                    # 左臂 7 维关节状态，float32。
         "observation.state.right_arm",                   # 右臂 7 维关节状态，float32。
-        "observation.state.left_ee_pose_gripper_base",   # 左夹爪末端在 base 坐标系下的 6 维位姿：xyz(3) + rpy(3)。
-        "observation.state.right_ee_pose_gripper_base",  # 右夹爪末端在 base 坐标系下的 6 维位姿：xyz(3) + rpy(3)。
+        # "observation.state.left_ee_pose_gripper_base",   # PI0.5 split state/action 训练未使用。
+        # "observation.state.right_ee_pose_gripper_base",  # PI0.5 split state/action 训练未使用。
         "observation.state.left_gripper",                # 左夹爪 1 维开度，float32。
         "observation.state.right_gripper",               # 右夹爪 1 维开度，float32。
-        "observation.state.lower_body",                  # 下身 15 维本体感知，float32。
+        # "observation.state.lower_body",                  # PI0.5 split state/action 训练未使用。
     )
     # README 评测 key -> 数据集 / 模型训练 key。
     OBSERVATION_KEY_MAP = {
@@ -118,16 +118,8 @@ class ExamplePolicy:
             "action.left_gripper": self._latest_or_zeros(model_obs, "observation.state.left_gripper", 1),
             "action.right_gripper": self._latest_or_zeros(model_obs, "observation.state.right_gripper", 1),
             "action.pivot": np.zeros((7,), dtype=np.float32),
-            "action.left_ee_pose_gripper_base": self._latest_or_zeros(
-                model_obs,
-                "observation.state.left_ee_pose_gripper_base",
-                6,
-            ),
-            "action.right_ee_pose_gripper_base": self._latest_or_zeros(
-                model_obs,
-                "observation.state.right_ee_pose_gripper_base",
-                6,
-            ),
+            "action.left_ee_pose_gripper_base": np.zeros((6,), dtype=np.float32),
+            "action.right_ee_pose_gripper_base": np.zeros((6,), dtype=np.float32),
         }
 
     def _load_model(self):
@@ -293,12 +285,10 @@ class ExamplePolicy:
             action["action.left_ee_pose_gripper_base"] = self._chunk_action(
                 model_action.get("action.left_ee_pose_gripper_base"),
                 6,
-                fallback=self._latest_or_zeros(obs, "observation.state.left_ee_pose_gripper_base", 6),
             )
             action["action.right_ee_pose_gripper_base"] = self._chunk_action(
                 model_action.get("action.right_ee_pose_gripper_base"),
                 6,
-                fallback=self._latest_or_zeros(obs, "observation.state.right_ee_pose_gripper_base", 6),
             )
         return action
 

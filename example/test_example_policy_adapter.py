@@ -22,12 +22,17 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
             "observation.images.cam_right_wrist": np.full((T, 480, 640, 3), 3, dtype=np.uint8),
             "observation.state.left_arm": np.ones((T, 7), dtype=np.float32),
             "observation.state.right_arm": np.full((T, 7), 2.0, dtype=np.float32),
-            "observation.state.left_ee_pose_gripper_base": np.zeros((T, 6), dtype=np.float32),
-            "observation.state.right_ee_pose_gripper_base": np.zeros((T, 6), dtype=np.float32),
             "observation.state.left_gripper": np.full((T, 1), 0.4, dtype=np.float32),
             "observation.state.right_gripper": np.full((T, 1), 0.6, dtype=np.float32),
-            "observation.state.lower_body": np.zeros((T, 15), dtype=np.float32),
         }
+
+    def test_metadata_declares_only_pi05_runtime_observation_keys(self):
+        data_keys = set(self.policy.metadata["data_keys"])
+
+        self.assertNotIn("observation.state.left_ee_pose_gripper_base", data_keys)
+        self.assertNotIn("observation.state.right_ee_pose_gripper_base", data_keys)
+        self.assertNotIn("observation.state.lower_body", data_keys)
+        self.assertEqual(data_keys, set(self.obs))
 
     def test_adapts_evaluator_observation_keys_to_dataset_keys(self):
         model_obs = self.policy._adapt_observation(self.obs)
