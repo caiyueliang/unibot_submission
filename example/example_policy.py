@@ -28,17 +28,17 @@ class ExamplePolicy:
     ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", "8"))
     # policy 需要的观测 key 列表。服务端会把这份声明放进 metadata 发给客户端。
     DATA_KEYS = (
-        "observation.language",
-        "observation.images.cam_left_high",
-        "observation.images.cam_left_wrist",
-        "observation.images.cam_right_wrist",
-        "observation.state.left_arm",
-        "observation.state.right_arm",
-        "observation.state.left_ee_pose_gripper_base",
-        "observation.state.right_ee_pose_gripper_base",
-        "observation.state.left_gripper",
-        "observation.state.right_gripper",
-        "observation.state.lower_body",
+        "observation.language",                          # 当前 episode 的自然语言任务指令，标量 str。
+        "observation.images.cam_left_high",              # 左上方相机图像，单帧形状 [480, 640, 3]，HWC，RGB，uint8。
+        "observation.images.cam_left_wrist",             # 左手腕相机图像，单帧形状 [480, 640, 3]，HWC，RGB，uint8。
+        "observation.images.cam_right_wrist",            # 右手腕相机图像，单帧形状 [480, 640, 3]，HWC，RGB，uint8。
+        "observation.state.left_arm",                    # 左臂 7 维关节状态，float32。
+        "observation.state.right_arm",                   # 右臂 7 维关节状态，float32。
+        "observation.state.left_ee_pose_gripper_base",   # 左夹爪末端在 base 坐标系下的 6 维位姿：xyz(3) + rpy(3)。
+        "observation.state.right_ee_pose_gripper_base",  # 右夹爪末端在 base 坐标系下的 6 维位姿：xyz(3) + rpy(3)。
+        "observation.state.left_gripper",                # 左夹爪 1 维开度，float32。
+        "observation.state.right_gripper",               # 右夹爪 1 维开度，float32。
+        "observation.state.lower_body",                  # 下身 15 维本体感知，float32。
     )
     # README 评测 key -> 数据集 / 模型训练 key。
     OBSERVATION_KEY_MAP = {

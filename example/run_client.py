@@ -46,7 +46,7 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
 
         # print(f"[{i}/{n_steps}] obs: {obs}")
         action = client.get_action(obs)
-        # print(f"[{i}/{n_steps}] action: {action}")
+        print(f"[{i}/{n_steps}] action: {action}")
         try:
             # env.step 会严格检查 action 的 key、shape、dtype 和 token。
             obs = env.step(action)
