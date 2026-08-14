@@ -46,7 +46,7 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
 
         # print(f"[{i}/{n_steps}] obs: {obs}")
         action = client.get_action(obs)
-        # print(f"[{i}/{n_steps}] action: {action}; obs: {obs}")
+        # print(f"[{i}/{n_steps}] action: {action}")
         try:
             # env.step 会严格检查 action 的 key、shape、dtype 和 token。
             obs = env.step(action)
@@ -56,7 +56,7 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
         # 打印动作 key 和 shape，方便本地确认当前控制空间输出是否符合预期。
         action_keys = [k for k in action if not k.startswith("meta.")]
         shapes = ", ".join(f"{k}={tuple(action[k].shape)}" for k in action_keys)
-        
+
         print(f"[step {i}] OK — token verified, {len(action_keys)} action keys: {shapes}")
 
     print("\nAll steps passed validation.")
