@@ -23,9 +23,9 @@ class ExamplePolicy:
     """可运行的 policy 适配层；token 和 control_space 从环境变量读取。"""
 
     # policy 每次接收的观测 chunk 长度。评测环境会按这个长度构造 observation。
-    OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", "2"))
+    OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", "1"))
     # policy 每次返回的动作 chunk 长度。所有动作数组第一维都必须等于这个值。
-    ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", "8"))
+    ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", "1"))
     # policy 需要的观测 key 列表。服务端会把这份声明放进 metadata 发给客户端。
     DATA_KEYS = (
         "observation.language",                          # 当前 episode 的自然语言任务指令，标量 str。
