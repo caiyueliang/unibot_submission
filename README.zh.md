@@ -187,6 +187,51 @@ class MyPolicy:
 pip install -r requirements.txt   # numpy、msgpack、websockets
 ```
 
+### Docker 镜像
+
+仓库根目录提供 `Dockerfile`，镜像默认启动推理服务，不包含模型权重和数据集。构建：
+
+```bash
+docker build -t twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 .
+```
+
+默认构建只安装服务协议和本地 fallback policy 所需依赖，保证镜像可以直接启动服务。
+如果需要在镜像内提前安装 PI0.5/LeRobot 推理依赖，可使用：
+
+```bash
+docker build \
+  --build-arg INSTALL_INFERENCE_DEPS=true \
+  -t twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 .
+```
+
+运行时挂载模型、数据集和 LeRobot 源码，并通过环境变量指定路径：
+
+```bash
+docker run --rm --gpus all \
+  -p 8765:8765 \
+  -e UNIBOT_SUBMISSION_TOKEN="123456" \
+  -e UNIBOT_POLICY_PATH=/models/pi05 \
+  -e UNIBOT_REPO_ID=/datasets/G1_Dex1_ArrangeTestTubes_3cams \
+  -e UNIBOT_CONTROL_SPACE=joint \
+  -e UNIBOT_SERVER_PORT=8765 \
+  -v /data/ckpt/pi05_all/042000/pretrained_model:/models/pi05:ro \
+  -v /data/datasets/G1_Dex1_ArrangeTestTubes_3cams:/datasets/G1_Dex1_ArrangeTestTubes_3cams:ro \
+  -v /home/wair/caiyueliang/lerobot:/opt/lerobot:ro \
+  -v /home/wair/caiyueliang/unitree_lerobot:/opt/unitree_lerobot:ro \
+  -v /home/wair/yangsheng/xr_teleoperate/teleop/teleimager:/opt/teleimager:ro \
+  -v unibot_hf_cache:/cache/huggingface \
+  twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0
+```
+
+同一个镜像也包含本地验证 client：
+
+```bash
+docker run --rm --network host \
+  -e UNIBOT_SUBMISSION_TOKEN="123456" \
+  twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 \
+  python client.py ws://127.0.0.1:8765
+```
+
 ### 工作流程
 
 本地验证统一通过 `run_server.py` + `run_client.py` 进行：一个终端启动 server，另一个终端以 client 模拟评测器连入。两端的 token 须保持一致。

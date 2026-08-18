@@ -232,6 +232,54 @@ submission:
 pip install -r requirements.txt   # numpy, msgpack, websockets
 ```
 
+### Docker Image
+
+The repository root includes a `Dockerfile`. The image starts the inference
+server by default and does not include model weights or datasets. Build it with:
+
+```bash
+docker build -t twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 .
+```
+
+The default build installs only the service protocol and local fallback policy
+dependencies, so the container can start the server directly. To preinstall the
+PI0.5/LeRobot inference dependencies inside the image, build with:
+
+```bash
+docker build \
+  --build-arg INSTALL_INFERENCE_DEPS=true \
+  -t twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 .
+```
+
+At runtime, mount the model, dataset, and LeRobot source tree, then point the
+service at those paths through environment variables:
+
+```bash
+docker run --rm --gpus all \
+  -p 8765:8765 \
+  -e UNIBOT_SUBMISSION_TOKEN="123456" \
+  -e UNIBOT_POLICY_PATH=/models/pi05 \
+  -e UNIBOT_REPO_ID=/datasets/G1_Dex1_ArrangeTestTubes_3cams \
+  -e UNIBOT_CONTROL_SPACE=joint \
+  -e UNIBOT_SERVER_PORT=8765 \
+  -v /data/ckpt/pi05_all/042000/pretrained_model:/models/pi05:ro \
+  -v /data/datasets/G1_Dex1_ArrangeTestTubes_3cams:/datasets/G1_Dex1_ArrangeTestTubes_3cams:ro \
+  -v /home/wair/caiyueliang/lerobot:/opt/lerobot:ro \
+  -v /home/wair/caiyueliang/unitree_lerobot:/opt/unitree_lerobot:ro \
+  -v /home/wair/yangsheng/xr_teleoperate/teleop/teleimager:/opt/teleimager:ro \
+  -v unibot_hf_cache:/cache/huggingface \
+  twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0
+```
+
+The same image also includes the local validation client:
+
+```bash
+docker run --rm --network host \
+  -e UNIBOT_SUBMISSION_TOKEN="123456" \
+  twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 \
+  python client.py ws://127.0.0.1:8765
+```
+
 ### Workflow
 
 Local verification is always performed through `run_server.py` and
