@@ -194,7 +194,7 @@ pip install -r requirements.txt   # numpy、msgpack、websockets
 1. **先运行参考实现。** 使用未经改动的 `ExamplePolicy` 完整运行一次，确认端到端输出正常（client 每步打印 `token verified`，且无 `ACTION REJECTED`），以了解完整的评测流程：
    ```bash
    # 终端 A
-   UNIBOT_SUBMISSION_TOKEN=dev-token UNIBOT_CONTROL_SPACE=joint python example/run_server.py 8765
+   UNIBOT_SUBMISSION_TOKEN=dev-token UNIBOT_CONTROL_SPACE=joint UNIBOT_SERVER_PORT=8765 python example/run_server.py
 
    # 终端 B
    UNIBOT_SUBMISSION_TOKEN=dev-token python example/run_client.py
@@ -208,12 +208,12 @@ pip install -r requirements.txt   # numpy、msgpack、websockets
    **方式一 · 每端口独立 server（最稳定）。** N 个端口各跑一个进程、各自加载一份模型，互不影响、实现最简单；代价是需要 N 份模型的显存 / 内存，模型较重时成本高。以 **N = 3** 为例，开放 `8765`–`8767`，各启动一个实例：
 
    ```bash
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8765
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8766
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8767
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8765 python example/run_server.py
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8766 python example/run_server.py
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8767 python example/run_server.py
    ```
 
-   行尾数字即该实例监听的端口。这些实例可同机部署，也可分布于多台机器，但须保证全部 N 个端口均可从外部访问。
+   `UNIBOT_SERVER_PORT` 即该实例监听的端口。这些实例可同机部署，也可分布于多台机器，但须保证全部 N 个端口均可从外部访问。
 
    **方式二 · 多端口共用模型（省资源）。** 模型较重、显存 / 内存装不下 N 份时，可让多个端口共用同一份模型，但需参赛者自行在 server 端实现请求分发（N 个轻量端点各监听一个端口，再把请求转发给共享的推理后端）。此时须注意两点：
 
@@ -227,4 +227,3 @@ pip install -r requirements.txt   # numpy、msgpack、websockets
 评测全程通过网络对策略逐步发起调用，每次 `get_action` 响应的时延与内容均会被记录。提交方应保持交互时延平滑、稳定，并使返回结果尽量避免不必要的异常值。
 
 组委会在评估成绩可信度时，可能综合评测过程中采集的各项交互数据，包括每步响应时延及其波动，以及返回动作的统计规律性，且上述指标可能与公布的成绩一同展示。请参赛者据此保持每步推理时延稳定，确保返回动作格式规范、无异常离群值，并避免任何导致交互模式不规律的行为。
-

@@ -244,7 +244,7 @@ evaluator by connecting as a client. The token must match on both ends.
    behaviour of a full pass:
    ```bash
    # Terminal A
-   UNIBOT_SUBMISSION_TOKEN=dev-token UNIBOT_CONTROL_SPACE=joint python example/run_server.py 8765
+   UNIBOT_SUBMISSION_TOKEN=dev-token UNIBOT_CONTROL_SPACE=joint UNIBOT_SERVER_PORT=8765 python example/run_server.py
 
    # Terminal B
    UNIBOT_SUBMISSION_TOKEN=dev-token python example/run_client.py
@@ -276,12 +276,12 @@ evaluator by connecting as a client. The token must match on both ends.
    `8765`–`8767`, one instance each:
 
    ```bash
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8765
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8766
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8767
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8765 python example/run_server.py
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8766 python example/run_server.py
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8767 python example/run_server.py
    ```
 
-   The trailing number is the port that instance listens on. These instances may
+   `UNIBOT_SERVER_PORT` is the port that instance listens on. These instances may
    run on one machine or be spread across several, but all N ports must be
    reachable from outside.
 
