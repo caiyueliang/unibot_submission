@@ -6,6 +6,7 @@ which validates every action. UNIBOT_SUBMISSION_TOKEN must match the server's.
 
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # repo root, for the `policy` package
@@ -24,15 +25,21 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
     env = ExampleEnv(meta)
     print("[server metadata]")
     print(f"  control_space     = {meta['control_space']}")
-    print(f"  data_keys         = {meta['data_keys']}")
-    print(f"  obs_chunk_size    = {meta['obs_chunk_size']}")
     print(f"  action_chunk_size = {meta['action_chunk_size']}")
+    print(f"  image_resize      = {meta['image_resize']}")
+    print(f"  obs_delta_indices =")
+    for key, offsets in meta["obs_delta_indices"].items():
+        print(f"      {key}: {offsets}")
     print()
 
     client.reset()
     obs = env.reset()
+    latencies_ms = []
     for i in range(n_steps):
+        t0 = time.perf_counter()
         action = client.get_action(obs)
+        dt_ms = (time.perf_counter() - t0) * 1e3
+        latencies_ms.append(dt_ms)
         try:
             obs = env.step(action)
         except ActionError as e:
@@ -40,8 +47,16 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
             sys.exit(1)
         action_keys = [k for k in action if not k.startswith("meta.")]
         shapes = ", ".join(f"{k}={tuple(action[k].shape)}" for k in action_keys)
-        print(f"[step {i}] OK — token verified, {len(action_keys)} action keys: {shapes}")
+        print(f"[step {i}] OK — token verified, {dt_ms:.1f} ms, {len(action_keys)} action keys: {shapes}")
     print("\nAll steps passed validation.")
+    n = len(latencies_ms)
+    if n:
+        print(
+            f"get_action latency over {n} steps: "
+            f"mean {sum(latencies_ms) / n:.1f} ms, "
+            f"min {min(latencies_ms):.1f} ms, "
+            f"max {max(latencies_ms):.1f} ms"
+        )
 
 
 if __name__ == "__main__":
