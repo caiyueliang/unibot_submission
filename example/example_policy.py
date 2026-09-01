@@ -158,13 +158,13 @@ class ExamplePolicy:
 
         policy_cfg = PreTrainedConfig.from_pretrained(self._policy_path)
         policy_cfg.pretrained_path = self._policy_path
-        self.OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", getattr(policy_cfg, "n_obs_steps", 1)))
-        self.ACTION_CHUNK_SIZE = int(
-            os.environ.get(
-                "UNIBOT_ACTION_CHUNK_SIZE",
-                getattr(policy_cfg, "n_action_steps", getattr(policy_cfg, "chunk_size", self.ACTION_CHUNK_SIZE)),
-            )
-        )
+        # self.OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", getattr(policy_cfg, "n_obs_steps", 1)))
+        # self.ACTION_CHUNK_SIZE = int(
+        #     os.environ.get(
+        #         "UNIBOT_ACTION_CHUNK_SIZE",
+        #         getattr(policy_cfg, "n_action_steps", getattr(policy_cfg, "chunk_size", self.ACTION_CHUNK_SIZE)),
+        #     )
+        # )
 
         dataset_meta = self._load_dataset_meta(self._repo_id)
         self._policy = make_policy(cfg=policy_cfg, ds_meta=dataset_meta)
