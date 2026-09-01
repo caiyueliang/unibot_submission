@@ -22,7 +22,8 @@ CONTROL_SPACES = ("joint", "ee")
 class ExamplePolicy:
     """可运行的 policy 适配层；token 和 control_space 从环境变量读取。"""
 
-    ACTION_CHUNK_SIZE = 8
+    ACTION_CHUNK_SIZE = 1
+    OBS_CHUNK_SIZE = 1
     # Per-key temporal stacking: obs_delta_indices[key][i] is frame i's offset
     # from the current step, so a key's observation carries len(value) stacked
     # frames. Its keys also select which observations are sent — declare only
