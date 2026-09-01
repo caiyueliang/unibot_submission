@@ -1,4 +1,5 @@
 # Runtime dependencies for the bundled reference implementation.
 numpy
 msgpack
-websockets
+websockets>=13.0  # needs the websockets.asyncio.server API (added in 13.0)
+Pillow             # imported as PIL in policy/web_policy.py to JPEG-encode/decode camera frames

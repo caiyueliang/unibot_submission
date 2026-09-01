@@ -6,22 +6,25 @@
     policy.get_action(obs)    -> dict，输入一段观测后返回一段动作
     policy.reset()            -> 清空每个 episode 级别的内部状态
 
-``PolicyService`` 负责把本地 policy 包装成 WebSocket 服务；模型推理等
-计算较重的部分可以部署在一台机器上，而 ``RemotePolicy`` 可以从另一台机器
-连接过去，并像调用本地 policy 一样调用远端策略。网络上传输的数据使用
-msgpack 编码；numpy 数组和 numpy 标量通过本文件里的自定义 hook 转换。
+``PolicyService`` wraps such an object and publishes it over websocket; the
+compute-heavy side can then run on one machine while ``RemotePolicy`` connects
+from another and is used exactly like a local policy. Numpy arrays and scalars
+cross the wire as msgpack via a small custom hook; camera images are additionally
+JPEG-compressed so a stack of frames does not have to travel as raw pixels.
 """
 
 from __future__ import annotations
 
 import asyncio
 import http
+import io
 import logging
 import time
 import traceback
 
 import msgpack
 import numpy as np
+from PIL import Image
 from websockets.asyncio.server import serve as _open_server
 from websockets.exceptions import ConnectionClosed
 from websockets.frames import CloseCode
@@ -36,18 +39,69 @@ log = logging.getLogger(__name__)
 #  Numpy <-> msgpack                                                           #
 # --------------------------------------------------------------------------- #
 #
-# msgpack 本身不知道如何表示 numpy.ndarray / numpy 标量，所以这里定义两个
-# hook 做“编码前转换”和“解码后还原”。数组会被拆成三部分：原始字节、dtype、
-# shape；接收端再用这三部分精确重建数组。numpy 标量则先转成 Python 原生值。
-# object / void / complex 这类 dtype 很难保证跨进程、跨语言稳定还原，因此提前拒绝。
+# msgpack has no built-in representation for numpy values, so a set of hooks
+# bridges the gap:
+#
+#   * Camera images -- uint8 arrays laid out channels-last, i.e. any
+#     ``(..., H, W, C)`` stack with ``C in (1, 3)`` -- are JPEG-encoded. Each
+#     frame of the (possibly time-stacked) batch becomes one JPEG blob, and the
+#     original shape rides alongside so the exact stack is rebuilt on the far
+#     side. JPEG is *lossy*: this trades a little image fidelity for a large
+#     drop in wire size, which is the whole point for high-rate video obs.
+#   * Every other ndarray (float state vectors, action chunks, ...) is written
+#     as its raw buffer plus dtype and shape, and rebuilt from exactly those --
+#     a byte-exact, lossless round trip.
+#   * A numpy scalar is written using its underlying Python value.
+#
+# Dtypes whose bytes would not round-trip cleanly (object, void, complex) are
+# rejected up front.
 
-_OPAQUE_KINDS = frozenset("OVc")  # numpy dtype.kind: object / void / complex
+_OPAQUE_KINDS = frozenset("OVc")  # object / void / complex
+_DEFAULT_JPEG_QUALITY = 95
 
 
-def _to_portable(value):
-    """msgpack 的 ``default`` hook：把 numpy 值转换成 msgpack 可编码的字典。"""
+def _is_image(value) -> bool:
+    """True for a uint8 array shaped like one or more channels-last images.
+
+    Matches ``(..., H, W, C)`` with ``C in (1, 3)`` and at least the three
+    trailing image axes, so a time-stacked ``(T, H, W, 3)`` obs and a lone
+    ``(H, W, 3)`` frame both qualify while float state / action arrays never do.
+    """
+    return (
+        isinstance(value, np.ndarray)
+        and value.dtype == np.uint8
+        and value.ndim >= 3
+        and value.shape[-1] in (1, 3)
+    )
+
+
+def _encode_jpeg(frame: np.ndarray, quality: int) -> bytes:
+    """Encode one ``(H, W, 3)`` or ``(H, W, 1)`` uint8 frame to JPEG bytes."""
+    if frame.shape[-1] == 1:
+        image = Image.fromarray(np.ascontiguousarray(frame[..., 0]), mode="L")
+    else:
+        image = Image.fromarray(np.ascontiguousarray(frame), mode="RGB")
+    buffer = io.BytesIO()
+    # subsampling=0 keeps full chroma (4:4:4); paired with a high quality it
+    # preserves the color detail that matters for control while still shrinking
+    # the payload by an order of magnitude versus raw pixels.
+    image.save(buffer, format="JPEG", quality=quality, subsampling=0)
+    return buffer.getvalue()
+
+
+def _to_portable(value, *, use_jpeg: bool, quality: int):
+    """``default`` hook: convert numpy values into msgpack-friendly maps."""
     if isinstance(value, (np.ndarray, np.generic)) and value.dtype.kind in _OPAQUE_KINDS:
         raise ValueError(f"cannot serialize values of dtype {value.dtype!r}")
+    if use_jpeg and _is_image(value):
+        # Flatten every leading (batch / time) axis into a list of frames so an
+        # arbitrarily stacked image collapses to one JPEG per frame.
+        frames = value.reshape((-1,) + value.shape[-3:])
+        return {
+            b"__jpeg__": True,
+            b"frames": [_encode_jpeg(frame, quality) for frame in frames],
+            b"shape": value.shape,
+        }
     if isinstance(value, np.ndarray):
         # ndarray 不能直接 msgpack，因此显式保存字节内容、dtype 字符串和 shape。
         return {
@@ -67,14 +121,18 @@ def _to_portable(value):
 
 
 def _from_portable(obj):
-    """msgpack 的 ``object_hook``：把 ``_to_portable`` 编码过的 numpy 值还原回来。"""
+    """``object_hook``: rebuild the numpy values encoded by :func:`_to_portable`."""
+    if b"__jpeg__" in obj:
+        # Decode each frame, restack, and restore the original leading shape.
+        # A grayscale frame decodes to (H, W); the reshape re-adds its trailing
+        # channel axis because the element count matches the stored shape.
+        frames = [np.asarray(Image.open(io.BytesIO(blob))) for blob in obj[b"frames"]]
+        return np.stack(frames, axis=0).reshape(tuple(obj[b"shape"]))
     if b"__ndarray__" in obj:
-        # buffer 指向 msgpack 解出来的 bytes；dtype 和 shape 保证数组布局与发送端一致。
-        return np.ndarray(
-            shape=obj[b"shape"],
-            dtype=np.dtype(obj[b"dtype"]),
-            buffer=obj[b"data"],
-        )
+        # Copy off the msgpack buffer: it is an immutable ``bytes``, so a view
+        # onto it would be read-only and crash any in-place post-processing the
+        # caller does to the reconstructed array (e.g. clipping an action chunk).
+        return np.frombuffer(obj[b"data"], dtype=np.dtype(obj[b"dtype"])).reshape(obj[b"shape"]).copy()
     if b"__npgeneric__" in obj:
         # 用保存下来的 dtype 类型包装 data，恢复成 numpy scalar。
         return np.dtype(obj[b"dtype"]).type(obj[b"data"])
@@ -84,13 +142,17 @@ def _from_portable(obj):
 class _Channel:
     """单条连接使用的 msgpack 编解码器。
 
-    ``Packer`` 内部会维护状态，官方也建议复用；因此每条连接都持有自己的
-    ``_Channel``。解码没有状态，直接用 ``unpackb`` 即可。
+    ``Packer`` keeps internal state and is meant to be reused, so every
+    connection holds its own; decoding is stateless and stays a function.
+    Image frames are JPEG-compressed when ``use_jpeg`` is set (the default);
+    decoding accepts JPEG-encoded frames regardless, so a JPEG sender and a
+    raw sender interoperate in either direction.
     """
 
-    def __init__(self) -> None:
-        # default 指向 _to_portable，让 msgpack 在遇到 numpy 值时自动走自定义转换。
-        self._packer = msgpack.Packer(default=_to_portable)
+    def __init__(self, *, use_jpeg: bool = True, jpeg_quality: int = _DEFAULT_JPEG_QUALITY) -> None:
+        self._packer = msgpack.Packer(
+            default=lambda value: _to_portable(value, use_jpeg=use_jpeg, quality=jpeg_quality)
+        )
 
     def freeze(self, obj) -> bytes:
         """把 Python 对象编码成可通过 WebSocket 发送的 bytes。"""

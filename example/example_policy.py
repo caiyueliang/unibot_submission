@@ -22,29 +22,35 @@ CONTROL_SPACES = ("joint", "ee")
 class ExamplePolicy:
     """可运行的 policy 适配层；token 和 control_space 从环境变量读取。"""
 
-    # policy 每次接收的观测 chunk 长度。评测环境会按这个长度构造 observation。
-    OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", "1"))
-    # policy 每次返回的动作 chunk 长度。所有动作数组第一维都必须等于这个值。
-    ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", "1"))
-    # policy 需要的观测 key 列表。服务端会把这份声明放进 metadata 发给客户端。
-    DATA_KEYS = (
-        "observation.language",                          # 当前 episode 的自然语言任务指令，标量 str。
-        "observation.images.cam_left_high",              # 左上方相机图像，单帧形状 [480, 640, 3]，HWC，RGB，uint8。
-        "observation.images.cam_left_wrist",             # 左手腕相机图像，单帧形状 [480, 640, 3]，HWC，RGB，uint8。
-        "observation.images.cam_right_wrist",            # 右手腕相机图像，单帧形状 [480, 640, 3]，HWC，RGB，uint8。
-        "observation.state.left_arm",                    # 左臂 7 维关节状态，float32。
-        "observation.state.right_arm",                   # 右臂 7 维关节状态，float32。
-        # "observation.state.left_ee_pose_gripper_base",   # PI0.5 split state/action 训练未使用。
-        # "observation.state.right_ee_pose_gripper_base",  # PI0.5 split state/action 训练未使用。
-        "observation.state.left_gripper",                # 左夹爪 1 维开度，float32。
-        "observation.state.right_gripper",               # 右夹爪 1 维开度，float32。
-        # "observation.state.lower_body",                  # PI0.5 split state/action 训练未使用。
-    )
-    # README 评测 key -> 数据集 / 模型训练 key。
-    OBSERVATION_KEY_MAP = {
-        "observation.images.cam_left_high": "observation.images.head_stereo_left",
-        "observation.images.cam_left_wrist": "observation.images.wrist_left",
-        "observation.images.cam_right_wrist": "observation.images.wrist_right",
+    ACTION_CHUNK_SIZE = 8
+    # Per-key temporal stacking: obs_delta_indices[key][i] is frame i's offset
+    # from the current step, so a key's observation carries len(value) stacked
+    # frames. Its keys also select which observations are sent — declare only
+    # the observations the model consumes. Offsets are <= 0 and strictly
+    # increasing, so index 0 is the oldest frame and the last index is the
+    # newest; e.g. [-4, -2, 0] stacks the frames at t-4, t-2 and the current
+    # step t, and [0] is a single current frame. Non-contiguous spacing such as
+    # [-10, -5, -2, 0] is allowed. `observation.language` is a scalar string
+    # with no time axis, so its offset must be exactly [0].
+    OBS_DELTA_INDICES = {
+        "observation.language":                         [0],
+        "observation.images.cam_left_high":             [-10, -5, -2, 0],
+        "observation.images.cam_left_wrist":            [-10, -5, -2, 0],
+        "observation.images.cam_right_wrist":           [-10, -5, -2, 0],
+        "observation.state.left_arm":                   [-4, -2, 0],
+        "observation.state.right_arm":                  [-4, -2, 0],
+        "observation.state.left_ee_pose_gripper_base":  [-4, -2, 0],
+        "observation.state.right_ee_pose_gripper_base": [-4, -2, 0],
+        "observation.state.left_gripper":               [-4, -2, 0],
+        "observation.state.right_gripper":              [-4, -2, 0],
+        "observation.state.lower_body":                 [-4, -2, 0],
+    }
+    # Ask the client to resize these image keys to [height, width] before
+    # sending them; each key must also appear in OBS_DELTA_INDICES. Image keys
+    # left out of this map are delivered at their native catalog resolution.
+    IMAGE_RESIZE = {
+        "observation.images.cam_left_high":  [240, 320],
+        "observation.images.cam_left_wrist": [128, 128],
     }
 
     def __init__(self):
@@ -78,8 +84,8 @@ class ExamplePolicy:
         """WebSocket 握手时发送给评测端的数据契约。"""
         return {
             "control_space":     self._control_space,
-            "data_keys":         list(self.DATA_KEYS),
-            "obs_chunk_size":    self.OBS_CHUNK_SIZE,
+            "obs_delta_indices": {k: list(v) for k, v in self.OBS_DELTA_INDICES.items()},
+            "image_resize":      {k: list(v) for k, v in self.IMAGE_RESIZE.items()},
             "action_chunk_size": self.ACTION_CHUNK_SIZE,
             "token":             self._token,
         }

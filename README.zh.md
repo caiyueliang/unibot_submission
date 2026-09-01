@@ -12,25 +12,29 @@
 
 | 成员 | 类别 | 说明 |
 |---|---|---|
-| `metadata`        | 属性 → `dict` | 声明控制空间、观测 key、时序 chunk 长度与提交 token。握手阶段发送一次。 |
-| `get_action(obs)` | 方法           | 在给定观测下产出一个动作 chunk。评测过程中每步调用一次。 |
+| `metadata`        | 属性 → `dict` | 策略配置：控制空间、观测 key 与时序叠帧、图像 resize、动作 chunk 长度、提交 token。 |
+| `get_action(obs)` | 方法           | 在给定观测下产出一个动作 chunk。 |
 | `reset()`         | 方法           | 清空 episode 内部状态。每个 episode 开始时调用一次。 |
 
 ### `metadata` 结构
 
 ```python
 {
-    "control_space":     str,         # "joint" 或 "ee"，动作空间（§3）
-    "data_keys":         list[str],   # §2 观测目录的子集
-    "obs_chunk_size":    int >= 1,    # 每个观测张量前置时序维度的长度
-    "action_chunk_size": int >= 1,    # 每个动作张量前置时序维度的长度
-    "token":             str,         # 组委会发放的提交 token（§5）
+    "control_space":     str,             # "joint" 或 "ee"，动作空间（§3）
+    "obs_delta_indices": dict[str, list], # 选中的观测 key -> 各帧偏移列表（§2）
+    "image_resize":      dict[str, list], # 图像 key -> resize 到的 [高, 宽]（§2）
+    "action_chunk_size": int >= 1,        # 每个动作前置时序维度的长度（§3）
+    "token":             str,             # 组委会发放的提交 token（§4）
 }
 ```
 
-以上五个字段**均为必填**。评测器按原样读取，且**不会**为任何缺失字段填入默认值，metadata 缺失或格式不符任一字段的提交，将在连接时被直接拒绝。
+评测器按下文各字段所述的约定读取 metadata。请按每个字段的要求填写，未按要求填写可能导致交互错误。
 
-`control_space` 指定 policy 所处的动作空间（§3），在 `"joint"` 与 `"ee"` 之间**互斥**。
+- **`control_space`** —— policy 所处的动作空间，取 `"joint"` 或 `"ee"`，二者**互斥**；它决定 `get_action` 必须返回哪一组双臂动作 key（§3）。
+- **`obs_delta_indices`** —— 同时承担两件事：**其 key 决定发送哪些观测**（只有声明的 key 才会被传输），**其 value 为一个帧偏移列表，声明该 key 的时序叠帧方式**（§2）。
+- **`image_resize`** —— 返回的 observation 中各图像的分辨率 `[高, 宽]`（§2）。
+- **`action_chunk_size`** —— `int` ≥ 1：`get_action` 返回的每个动作数组前置时序维度的长度（§3）。
+- **`token`** —— 组委会发放的提交 token，握手时校验一次（§4）。
 
 最小实现见 [`example/example_policy.py`](example/example_policy.py)。
 
@@ -38,95 +42,97 @@
 
 ## 2 · 观测格式
 
-`obs` 是一个 `dict`，其 key 取自下表所列目录，value 为 `numpy.ndarray`。每个 value 在表中所列的单帧形状之前再附加一个长度为 `obs_chunk_size` 的前置时序维度（详见 §4）。
+观测（`obs`）由评测端经网络发给策略，供其决策。`obs` 是一个 `dict`，可选 key 的范围及单帧形状、数据类型、说明如下。
 
-| Key | 单帧形状 | dtype | 说明 |
+### 观测目录
+
+| Key | 单帧形状 | 数据类型 | 说明 |
 |---|---|---|---|
-| `observation.images.cam_left_high`   | `[480, 640, 3]` | `uint8`   | 左上方相机，HWC，RGB |
-| `observation.images.cam_right_high`  | `[480, 640, 3]` | `uint8`   | 右上方相机，HWC，RGB |
-| `observation.images.cam_left_wrist`  | `[480, 640, 3]` | `uint8`   | 左手腕相机，HWC，RGB |
-| `observation.images.cam_right_wrist` | `[480, 640, 3]` | `uint8`   | 右手腕相机，HWC，RGB |
-| `observation.state.left_arm`         | `[7]`           | `float32` | 左臂关节状态 |
-| `observation.state.right_arm`        | `[7]`           | `float32` | 右臂关节状态 |
-| `observation.state.left_ee_pose_gripper_base`  | `[6]` | `float32` | 左夹爪末端在 base 坐标系下的位姿：`xyz(3)` + `rpy(3)` |
-| `observation.state.right_ee_pose_gripper_base` | `[6]` | `float32` | 右夹爪末端在 base 坐标系下的位姿：`xyz(3)` + `rpy(3)` |
-| `observation.state.left_gripper`     | `[1]`           | `float32` | 左夹爪开度 |
-| `observation.state.right_gripper`    | `[1]`           | `float32` | 右夹爪开度 |
-| `observation.state.lower_body`       | `[15]`          | `float32` | 下身本体感知 |
-| `observation.language`               | 标量            | `str`     | 当前 episode 的自然语言任务指令 |
+| `observation.images.cam_left_high`   | `[480, 640, 3]` | `numpy.uint8`   | 左上方相机，HWC，RGB |
+| `observation.images.cam_right_high`  | `[480, 640, 3]` | `numpy.uint8`   | 右上方相机，HWC，RGB |
+| `observation.images.cam_left_wrist`  | `[480, 640, 3]` | `numpy.uint8`   | 左手腕相机，HWC，RGB |
+| `observation.images.cam_right_wrist` | `[480, 640, 3]` | `numpy.uint8`   | 右手腕相机，HWC，RGB |
+| `observation.state.left_arm`         | `[7]`           | `numpy.float32` | 左臂关节状态 |
+| `observation.state.right_arm`        | `[7]`           | `numpy.float32` | 右臂关节状态 |
+| `observation.state.left_ee_pose_gripper_base`  | `[6]` | `numpy.float32` | 左夹爪末端在 base 坐标系下的位姿：`xyz(3)` + `rpy(3)` |
+| `observation.state.right_ee_pose_gripper_base` | `[6]` | `numpy.float32` | 右夹爪末端在 base 坐标系下的位姿：`xyz(3)` + `rpy(3)` |
+| `observation.state.left_gripper`     | `[1]`           | `numpy.float32` | 左夹爪开度 |
+| `observation.state.right_gripper`    | `[1]`           | `numpy.float32` | 右夹爪开度 |
+| `observation.state.lower_body`       | `[15]`          | `numpy.float32` | 下身本体感知 |
+| `observation.language`               | 标量            | `str`           | 当前 episode 的自然语言任务指令 |
 
-仅 `metadata.data_keys` 中声明的 key 会传递给 policy。请仅声明模型实际需要的最小子集。
+**注意：** `observation.language` 为单个 `str`，描述当前 episode 的任务（如 `"move the block to the target position."`），全程不变、不带时序维度；下文关于时序叠帧与形状的约定均不适用于 `observation.language`。
 
-关节臂状态（`observation.state.left_arm` / `right_arm`）与末端位姿（`observation.state.*_ee_pose_gripper_base`）**无论 `control_space` 为何都在目录中提供**。末端位姿中，`xyz` 为位置（米），`rpy` 为 roll-pitch-yaw 欧拉角（弧度）表示的姿态；其布局与 `action.*_ee_pose_gripper_base` 动作（§3）一致。
+与 `obs` 相关的 metadata 字段：
 
-`observation.language` 是上述张量布局的例外：其 value 为单个 Python `str`，描述需要执行的任务（例如 `"move the block to the target position."`）。该指令在**整个 episode 内保持不变**，且**不带前置时序维度**（见 §4）。
+- **`obs_delta_indices`**：决定下发哪些 key，以及各 key 如何时序叠帧；
+- **`image_resize`**：决定各图像的分辨率。
+
+### `obs_delta_indices` — 选取观测与时序叠帧
+
+`obs_delta_indices` 同时决定两件事：
+
+1. **选哪些观测**：只传输其中声明的 key，请只声明模型需要的最小子集；
+2. **如何叠帧**：每个 value 是相对当前步的**帧偏移**列表。
+
+偏移含义：`0` 表示当前步，负数表示过去若干步；列表按时间从旧到新排列，长度即叠帧数。例如：
+
+```python
+"observation.state.left_arm": [-10, -5, -2, 0]  # t-10、t-5、t-2、t，共 4 帧
+```
+
+基于此配置，返回的 `obs` 中该数组形状为 `(4, 7)`，即 `(叠帧数, …单帧形状…)`；即使不需要叠帧，也请保留长度为 `1` 的时序维度列表。偏移须为 **≤ 0** 的 `int`，且索引列表严格递增；历史帧不足时，缺的帧使用第一帧补齐。`observation.language` 不带时序维度，其偏移列表须恰为 `[0]`。
+
+### `image_resize` — 图像分辨率
+
+图像原生分辨率为 `[480, 640]`（高、宽），与开源数据保持一致。`image_resize` 可为需要缩放的图像 key 指定目标 `[高, 宽]`，评测端发送前按此缩放，策略直接收到目标分辨率。例如：
+
+```python
+{"observation.images.cam_left_high": [240, 320]}
+```
+
+value 为 `[高, 宽]`（正整数）；评测端调用 `cv2.resize(frame, (宽, 高))` 缩放，缩放后单帧为 `[高, 宽, 3]`。key 须已出现在 `obs_delta_indices` 中。未列出或 `image_resize` 为空 `{}` 时，保持原生分辨率。
 
 ---
 
 ## 3 · 动作格式
 
-`get_action` 返回一个 `dict`，其中需包含提交 token（§5）以及策略在 `metadata.control_space` 中声明的**控制空间**所对应的动作数组。policy 只处于其中一个控制空间；`"joint"` 与 `"ee"` **互斥**。每个动作 value 在表中所列的单帧形状之前再附加一个长度为 `action_chunk_size` 的前置时序维度（详见 §4）。
+动作由策略经网络返回给评测端，供其执行。`get_action` 的返回值是一个 `dict`，所有 key 的范围及单帧形状、数据类型、说明如下。
 
-动作 key 分为两类：一类是 `joint` 与 `ee` 下都必须提供、且键名 / 形状 / dtype 完全一致的**公共 key**（`meta.token` 与夹爪、pivot）；另一类是随 `control_space` 二选一的**双臂 key**（`joint` 用关节目标，`ee` 用末端位姿）。下面三张表分别列出。
+### 动作目录
 
-**公共 key，两种控制空间下都存在**
+| Key | 单帧形状 | 数据类型 | 控制模式 | 说明 |
+|---|---|---|---|---|
+| `meta.token`           | 标量 | `str`           | 共用 | 组委会为该提交发放的 token（§4） |
+| `action.left_gripper`  | `[1]`  | `numpy.float32` | 共用 | 左夹爪目标指令 |
+| `action.right_gripper` | `[1]`  | `numpy.float32` | 共用 | 右夹爪目标指令 |
+| `action.pivot`         | `[7]`  | `numpy.float32` | 共用 | 下身 / pivot 目标 |
+| `action.left_arm`  | `[7]` | `numpy.float32` | `joint` | 左臂关节目标位置 |
+| `action.right_arm` | `[7]` | `numpy.float32` | `joint` | 右臂关节目标位置 |
+| `action.left_ee_pose_gripper_base`  | `[6]` | `numpy.float32` | `ee` | 左夹爪末端在 base 下的目标位姿：`xyz(3)` + `rpy(3)` |
+| `action.right_ee_pose_gripper_base` | `[6]` | `numpy.float32` | `ee` | 右夹爪末端在 base 下的目标位姿：`xyz(3)` + `rpy(3)` |
 
-| Key | 单帧形状 | dtype | 说明 |
-|---|---|---|---|
-| `meta.token`           | 标量 | `str`     | 组委会为该提交发放的 token（§5） |
-| `action.left_gripper`  | `[1]`  | `float32` | 左夹爪指令 |
-| `action.right_gripper` | `[1]`  | `float32` | 右夹爪指令 |
-| `action.pivot`         | `[7]`  | `float32` | 下身 / pivot 目标 |
+**注意：** `meta.token` 为单个 `str`（§4），不带时序维度；下文关于动作步数与形状的约定均不适用于 `meta.token`。
 
-**`control_space = "joint"`**，双臂动作为目标关节位置：
+与动作相关的 metadata 字段：
 
-| Key | 单帧形状 | dtype | 说明 |
-|---|---|---|---|
-| `action.left_arm`  | `[7]` | `float32` | 左臂关节目标位置 |
-| `action.right_arm` | `[7]` | `float32` | 右臂关节目标位置 |
+- **`control_space`**：控制模式；
+- **`action_chunk_size`**：每次 `get_action` 返回的动作步数。
 
-**`control_space = "ee"`**，双臂动作为目标末端位姿：
+### `control_space` — 控制模式
 
-| Key | 单帧形状 | dtype | 说明 |
-|---|---|---|---|
-| `action.left_ee_pose_gripper_base`  | `[6]` | `float32` | 左夹爪末端在 base 坐标系下的目标位姿：`xyz(3)` + `rpy(3)` |
-| `action.right_ee_pose_gripper_base` | `[6]` | `float32` | 右夹爪末端在 base 坐标系下的目标位姿：`xyz(3)` + `rpy(3)` |
+取 `"joint"` 或 `"ee"`，二者**互斥**。两种模式均须返回表中「共用」的 key，并按所选模式额外返回对应双臂 key：
 
-末端位姿中，`xyz` 为位置（米），`rpy` 为 roll-pitch-yaw 欧拉角（弧度）表示的姿态，与 `observation.state.*_ee_pose_gripper_base` 观测（§2）的布局一致。
+- **`"joint"`**：`action.left_arm`、`action.right_arm`；
+- **`"ee"`**：`action.left_ee_pose_gripper_base`、`action.right_ee_pose_gripper_base`。
 
----
+### `action_chunk_size` — 动作步数
 
-## 4 · 前置时序维度
-
-所有观测张量与动作张量均带有一个前置时序维度，其长度由 `metadata` 中的对应字段决定。
-
-```text
-# obs_chunk_size = T_o
-obs["observation.images.cam_left_high"].shape == (T_o, 480, 640, 3)
-obs["observation.state.left_arm"].shape       == (T_o, 7)
-obs["observation.state.lower_body"].shape     == (T_o, 15)
-
-# action_chunk_size = T_a，公共 key（joint 与 ee 都有）
-action["action.left_gripper"].shape  == (T_a, 1)
-action["action.right_gripper"].shape == (T_a, 1)
-action["action.pivot"].shape         == (T_a, 7)
-
-# control_space == "joint"：双臂为关节目标
-action["action.left_arm"].shape      == (T_a, 7)
-action["action.right_arm"].shape     == (T_a, 7)
-
-# control_space == "ee"：双臂为末端位姿
-action["action.left_ee_pose_gripper_base"].shape  == (T_a, 6)
-action["action.right_ee_pose_gripper_base"].shape == (T_a, 6)
-```
-
-该维度按时间顺序排列。对观测而言，索引 `0` 为最旧帧，索引 `T_o − 1` 为最新帧；对动作而言，索引 `0` 为下一个执行的动作，评测器顺序执行各索引直至再次调用 `get_action`。当对应 chunk size 为 `1` 时，前置维度仍然存在，不会被省略。
-
-`observation.language` 不受此规则约束：它是单个字符串而非张量，传递时不带前置时序维度。
+`action_chunk_size`（记为 `T_a`，`int` ≥ 1）为每次返回的动作步数。各动作数组形状为 `(T_a, …单帧形状…)`，索引 `0` 最先执行，随后依次执行，直至评测端再次调用 `get_action`。即使只返回一步，也请保留长度为 `1` 的时序维度。
 
 ---
 
-## 5 · 提交 token
+## 4 · 提交 token
 
 每个通过审核的提交由组委会发放唯一的 token。policy 需在**两处**携带该 token：
 
@@ -149,8 +155,15 @@ class MyPolicy:
     def metadata(self):
         return {
             "control_space":     "joint",   # 或 "ee"
-            "data_keys":         [...],      # §2 目录的子集
-            "obs_chunk_size":    2,
+            "obs_delta_indices": {               # 观测 key -> 各帧偏移列表（§2）
+                "observation.language":       [0],
+                "observation.images.cam_left_high": [0],
+                "observation.state.left_arm": [-4, -2, 0],
+                # ... 模型消费的其余观测 key
+            },
+            "image_resize": {                # 图像 key -> [高, 宽]（§2），可为空
+                "observation.images.cam_left_high": [240, 320],
+            },
             "action_chunk_size": 8,
             "token":             self._token,
         }
@@ -166,7 +179,7 @@ class MyPolicy:
 
 ---
 
-## 6 · 参考实现与提交方式
+## 5 · 参考实现与提交方式
 
 `example/` 提供一份可运行的参考实现，仅作为实现示例。参赛者只需参照 `run_server.py` 的方式，将自有策略对象封装入 `PolicyService` 并监听指定端口对外提供服务，评测器即可连入。
 
@@ -177,14 +190,14 @@ class MyPolicy:
 | [`example/run_server.py`](example/run_server.py)         | **服务端入口范例**，任何提交均按此方式将策略对象交由 `PolicyService` 托管并监听端口。`UNIBOT_SUBMISSION_TOKEN` 与 `UNIBOT_CONTROL_SPACE`（`joint`/`ee`）均须设置。 |
 | [`example/run_client.py`](example/run_client.py)         | 本地端到端验证工具，模拟评测器连入参赛者的 server 并逐步校验返回的动作。生产环境下由组委会运行，`UNIBOT_SUBMISSION_TOKEN` 须与 server 的 token 一致。 |
 | [`policy/`](policy)                                       | `PolicyService` / `RemotePolicy` 与 msgpack-NumPy 适配。 |
-| [`requirements.txt`](requirements.txt)                   | 参考实现的依赖：`numpy`、`msgpack`、`websockets`。 |
+| [`requirements.txt`](requirements.txt)                   | 参考实现的依赖：`numpy`、`msgpack`、`websockets`、`Pillow`。 |
 
 ### 环境准备
 
 在用于本次提交的 Python 环境中安装依赖：
 
 ```bash
-pip install -r requirements.txt   # numpy、msgpack、websockets
+pip install -r requirements.txt   # numpy、msgpack、websockets、Pillow
 ```
 
 ### Docker 镜像
@@ -244,7 +257,7 @@ docker run --rm --network host \
    # 终端 B
    UNIBOT_SUBMISSION_TOKEN=dev-token python example/run_client.py
    ```
-2. **接入自有模型。** 按 §1 接口实现策略类，替换 `run_server.py` 中实例化的 `ExamplePolicy`；将 `get_action` 中的零向量替换为模型输出，并按需调整 `control_space`、`data_keys`、`obs_chunk_size`、`action_chunk_size`。
+2. **接入自有模型。** 按 §1 接口实现策略类，替换 `run_server.py` 中实例化的 `ExamplePolicy`；将 `get_action` 中的零向量替换为模型输出，并按需调整 `control_space`、`obs_delta_indices`、`image_resize`、`action_chunk_size`。
 3. **再次运行以确认接入无误。** 重复第 1 步的两个终端命令，确认接入自有模型后 client 仍逐步通过校验，即表明接口对接正确。
 4. **正式部署。** 将组委会下发的 token 写入 `UNIBOT_SUBMISSION_TOKEN`，按 `run_server.py` 的方式启动 server 并保持在线，评测器将主动连入。
 
@@ -267,7 +280,7 @@ docker run --rm --network host \
 
 ---
 
-## 7 · 交互质量与成绩可信度
+## 6 · 交互质量与成绩可信度
 
 评测全程通过网络对策略逐步发起调用，每次 `get_action` 响应的时延与内容均会被记录。提交方应保持交互时延平滑、稳定，并使返回结果尽量避免不必要的异常值。
 
