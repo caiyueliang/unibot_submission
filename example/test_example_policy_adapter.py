@@ -72,6 +72,7 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
             self.policy.get_action(self.obs)
         first_log = "\n".join(logs.output)
         self.assertIn("step=0", first_log)
+        self.assertIn("inference_ms=", first_log)
         self.assertIn("observation.state.left_arm", first_log)
         self.assertIn("action.left_arm", first_log)
         self.assertNotIn("observation.images", first_log)

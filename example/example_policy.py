@@ -12,6 +12,7 @@
 import os
 import json
 import logging
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -120,13 +121,15 @@ class ExamplePolicy:
         """
         step = self._step
         self._step += 1
+        start = time.perf_counter()
         model_obs = self._adapt_observation(obs)
         model_action = self._predict_model_action(model_obs)
         action = self._adapt_action(model_action, obs)
-        self._log_request_and_action(step, obs, action)
+        inference_ms = (time.perf_counter() - start) * 1e3
+        self._log_request_and_action(step, obs, action, inference_ms)
         return action
 
-    def _log_request_and_action(self, step, obs, action):
+    def _log_request_and_action(self, step, obs, action, inference_ms):
         """从第 0 帧开始每隔 30 帧打印一次非图像观测和输出动作。"""
         if step % 30 != 0:
             return
@@ -139,7 +142,13 @@ class ExamplePolicy:
             key: "<hidden>" if key == "meta.token" else self._summarize_log_value(value)
             for key, value in action.items()
         }
-        LOG.info("step=%s observation_without_images=%s action=%s", step, safe_obs, safe_action)
+        LOG.info(
+            "step=%s inference_ms=%.1f observation_without_images=%s action=%s",
+            step,
+            inference_ms,
+            safe_obs,
+            safe_action,
+        )
 
     @staticmethod
     def _summarize_log_value(value):
