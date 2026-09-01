@@ -20,6 +20,9 @@ import numpy as np
 
 CONTROL_SPACES = ("joint", "ee")
 LOG = logging.getLogger(__name__)
+DEFAULT_ENABLE_ACTION_SAFETY = True
+DEFAULT_MAX_JOINT_DELTA = 0.12
+DEFAULT_MAX_GRIPPER_DELTA = 0.2
 
 
 class ExamplePolicy:
@@ -88,6 +91,12 @@ class ExamplePolicy:
         self._device = None
         self._use_amp = False
         self._model_enabled = False
+        self._enable_action_safety = self._read_bool_env("UNIBOT_ENABLE_ACTION_SAFETY", DEFAULT_ENABLE_ACTION_SAFETY)
+        self._max_joint_delta = self._read_nonnegative_float_env("UNIBOT_MAX_JOINT_DELTA", DEFAULT_MAX_JOINT_DELTA)
+        self._max_gripper_delta = self._read_nonnegative_float_env(
+            "UNIBOT_MAX_GRIPPER_DELTA",
+            DEFAULT_MAX_GRIPPER_DELTA,
+        )
         self.OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", self.OBS_CHUNK_SIZE))
         self.ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", self.ACTION_CHUNK_SIZE))
         # 示例内部状态：记录 get_action 被调用次数。真实模型可替换成自己的回合状态。
@@ -125,9 +134,77 @@ class ExamplePolicy:
         model_obs = self._adapt_observation(obs)
         model_action = self._predict_model_action(model_obs)
         action = self._adapt_action(model_action, obs)
+        action = self._apply_action_safety_clip(action, obs)
         inference_ms = (time.perf_counter() - start) * 1e3
         self._log_request_and_action(step, obs, action, inference_ms)
         return action
+
+    def _apply_action_safety_clip(self, action, obs):
+        """按当前观测状态限制每一步目标动作的最大跳变量。"""
+        if not self._enable_action_safety:
+            return action
+        clipped = dict(action)
+        if self._control_space == "joint":
+            clipped["action.left_arm"] = self._clip_action_sequence(
+                clipped["action.left_arm"],
+                self._latest_or_zeros(obs, "observation.state.left_arm", 7),
+                self._max_joint_delta,
+            )
+            clipped["action.right_arm"] = self._clip_action_sequence(
+                clipped["action.right_arm"],
+                self._latest_or_zeros(obs, "observation.state.right_arm", 7),
+                self._max_joint_delta,
+            )
+        clipped["action.left_gripper"] = self._clip_action_sequence(
+            clipped["action.left_gripper"],
+            self._latest_or_zeros(obs, "observation.state.left_gripper", 1),
+            self._max_gripper_delta,
+        )
+        clipped["action.right_gripper"] = self._clip_action_sequence(
+            clipped["action.right_gripper"],
+            self._latest_or_zeros(obs, "observation.state.right_gripper", 1),
+            self._max_gripper_delta,
+        )
+        return clipped
+
+    @staticmethod
+    def _clip_action_sequence(targets, current, max_delta):
+        """从当前状态开始，按 chunk 内顺序逐步限制动作目标变化量。"""
+        targets = np.asarray(targets, dtype=np.float32)
+        previous = np.asarray(current, dtype=np.float32)
+        clipped = np.empty_like(targets, dtype=np.float32)
+        for i, target in enumerate(targets):
+            delta = np.clip(target - previous, -max_delta, max_delta)
+            clipped[i] = previous + delta
+            previous = clipped[i]
+        return clipped
+
+    @staticmethod
+    def _read_bool_env(name, default):
+        """读取布尔环境变量。"""
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):
+            return True
+        if normalized in ("0", "false", "no", "off"):
+            return False
+        raise ValueError(f"{name} must be a boolean, got {value!r}")
+
+    @staticmethod
+    def _read_nonnegative_float_env(name, default):
+        """读取非负浮点环境变量。"""
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        try:
+            parsed = float(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a non-negative float, got {value!r}") from exc
+        if parsed < 0:
+            raise ValueError(f"{name} must be a non-negative float, got {parsed}")
+        return parsed
 
     def _log_request_and_action(self, step, obs, action, inference_ms):
         """从第 0 帧开始每隔 30 帧打印一次非图像观测和输出动作。"""

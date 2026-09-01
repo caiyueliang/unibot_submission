@@ -13,6 +13,10 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
         os.environ.pop("UNIBOT_POLICY_PATH", None)
         os.environ.pop("UNIBOT_REPO_ID", None)
         os.environ.pop("UNIBOT_DEFAULT_TASK", None)
+        os.environ.pop("UNIBOT_ACTION_CHUNK_SIZE", None)
+        os.environ.pop("UNIBOT_ENABLE_ACTION_SAFETY", None)
+        os.environ.pop("UNIBOT_MAX_JOINT_DELTA", None)
+        os.environ.pop("UNIBOT_MAX_GRIPPER_DELTA", None)
         self.policy = ExamplePolicy()
         T = self.policy.OBS_CHUNK_SIZE
         self.obs = {
@@ -66,6 +70,92 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
 
         np.testing.assert_allclose(action["action.left_arm"][0], self.obs["observation.state.left_arm"][-1])
         np.testing.assert_allclose(action["action.right_arm"][0], self.obs["observation.state.right_arm"][-1])
+
+    def test_get_action_clips_large_joint_and_gripper_deltas(self):
+        os.environ["UNIBOT_ACTION_CHUNK_SIZE"] = "3"
+        os.environ["UNIBOT_MAX_JOINT_DELTA"] = "0.1"
+        os.environ["UNIBOT_MAX_GRIPPER_DELTA"] = "0.2"
+
+        class JumpPolicy(ExamplePolicy):
+            def _predict_model_action(self, model_obs):
+                return {
+                    "action.left_arm": np.array(
+                        [
+                            [1.0, -1.0, 0.05, 0.0, 0.0, 0.0, 0.0],
+                            [1.0, -1.0, 0.25, 0.0, 0.0, 0.0, 0.0],
+                            [-1.0, 1.0, 0.40, 0.0, 0.0, 0.0, 0.0],
+                        ],
+                        dtype=np.float32,
+                    ),
+                    "action.right_arm": np.array(
+                        [
+                            [-1.0, 1.0, -0.05, 0.0, 0.0, 0.0, 0.0],
+                            [-1.0, 1.0, -0.25, 0.0, 0.0, 0.0, 0.0],
+                            [1.0, -1.0, -0.40, 0.0, 0.0, 0.0, 0.0],
+                        ],
+                        dtype=np.float32,
+                    ),
+                    "action.left_gripper": np.array([[2.0], [2.0], [0.0]], dtype=np.float32),
+                    "action.right_gripper": np.array([[-2.0], [-2.0], [0.0]], dtype=np.float32),
+                    "action.pivot": np.ones((3, 7), dtype=np.float32),
+                }
+
+        policy = JumpPolicy()
+        obs = dict(self.obs)
+        obs["observation.state.left_arm"] = np.zeros((1, 7), dtype=np.float32)
+        obs["observation.state.right_arm"] = np.zeros((1, 7), dtype=np.float32)
+        obs["observation.state.left_gripper"] = np.zeros((1, 1), dtype=np.float32)
+        obs["observation.state.right_gripper"] = np.zeros((1, 1), dtype=np.float32)
+
+        action = policy.get_action(obs)
+
+        np.testing.assert_allclose(
+            action["action.left_arm"][:, :3],
+            np.array([[0.1, -0.1, 0.05], [0.2, -0.2, 0.15], [0.1, -0.1, 0.25]], dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            action["action.right_arm"][:, :3],
+            np.array([[-0.1, 0.1, -0.05], [-0.2, 0.2, -0.15], [-0.1, 0.1, -0.25]], dtype=np.float32),
+        )
+        np.testing.assert_allclose(action["action.left_gripper"], np.array([[0.2], [0.4], [0.2]], dtype=np.float32))
+        np.testing.assert_allclose(action["action.right_gripper"], np.array([[-0.2], [-0.4], [-0.2]], dtype=np.float32))
+        np.testing.assert_allclose(action["action.pivot"], np.ones((3, 7), dtype=np.float32))
+
+    def test_action_safety_clip_can_be_disabled(self):
+        os.environ["UNIBOT_ACTION_CHUNK_SIZE"] = "1"
+        os.environ["UNIBOT_ENABLE_ACTION_SAFETY"] = "false"
+
+        class JumpPolicy(ExamplePolicy):
+            def _predict_model_action(self, model_obs):
+                return {
+                    "action.left_arm": np.full((1, 7), 2.0, dtype=np.float32),
+                    "action.right_arm": np.full((1, 7), -2.0, dtype=np.float32),
+                    "action.left_gripper": np.array([[2.0]], dtype=np.float32),
+                    "action.right_gripper": np.array([[-2.0]], dtype=np.float32),
+                    "action.pivot": np.zeros((1, 7), dtype=np.float32),
+                }
+
+        policy = JumpPolicy()
+        obs = dict(self.obs)
+        obs["observation.state.left_arm"] = np.zeros((1, 7), dtype=np.float32)
+        obs["observation.state.right_arm"] = np.zeros((1, 7), dtype=np.float32)
+        obs["observation.state.left_gripper"] = np.zeros((1, 1), dtype=np.float32)
+        obs["observation.state.right_gripper"] = np.zeros((1, 1), dtype=np.float32)
+
+        action = policy.get_action(obs)
+
+        np.testing.assert_allclose(action["action.left_arm"], np.full((1, 7), 2.0, dtype=np.float32))
+        np.testing.assert_allclose(action["action.right_arm"], np.full((1, 7), -2.0, dtype=np.float32))
+
+    def test_rejects_invalid_action_safety_environment(self):
+        os.environ["UNIBOT_ENABLE_ACTION_SAFETY"] = "maybe"
+        with self.assertRaisesRegex(ValueError, "UNIBOT_ENABLE_ACTION_SAFETY"):
+            ExamplePolicy()
+
+        os.environ["UNIBOT_ENABLE_ACTION_SAFETY"] = "true"
+        os.environ["UNIBOT_MAX_JOINT_DELTA"] = "-0.1"
+        with self.assertRaisesRegex(ValueError, "UNIBOT_MAX_JOINT_DELTA"):
+            ExamplePolicy()
 
     def test_get_action_logs_every_30_frames_without_images(self):
         with self.assertLogs(level="INFO") as logs:
