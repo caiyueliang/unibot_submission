@@ -33,23 +33,43 @@ class ExamplePolicy:
     # 必须正好是 [0]。
     OBS_DELTA_INDICES = {
         "observation.language":                         [0],
-        "observation.images.cam_left_high":             [-10, -5, -2, 0],
-        "observation.images.cam_left_wrist":            [-10, -5, -2, 0],
-        "observation.images.cam_right_wrist":           [-10, -5, -2, 0],
-        "observation.state.left_arm":                   [-4, -2, 0],
-        "observation.state.right_arm":                  [-4, -2, 0],
-        # "observation.state.left_ee_pose_gripper_base":  [-4, -2, 0],
-        # "observation.state.right_ee_pose_gripper_base": [-4, -2, 0],
-        "observation.state.left_gripper":               [-4, -2, 0],
-        "observation.state.right_gripper":              [-4, -2, 0],
-        # "observation.state.lower_body":                 [-4, -2, 0],
+        "observation.images.cam_left_high":             [0],
+        "observation.images.cam_left_wrist":            [0],
+        "observation.images.cam_right_wrist":           [0],
+        "observation.state.left_arm":                   [0],
+        "observation.state.right_arm":                  [0],
+        # "observation.state.left_ee_pose_gripper_base":  [0],
+        # "observation.state.right_ee_pose_gripper_base": [0],
+        "observation.state.left_gripper":               [0],
+        "observation.state.right_gripper":              [0],
+        # "observation.state.lower_body":                 [0],
     }
+    # OBS_DELTA_INDICES = {
+    #     "observation.language":                         [0],
+    #     "observation.images.cam_left_high":             [-10, -5, -2, 0],
+    #     "observation.images.cam_left_wrist":            [-10, -5, -2, 0],
+    #     "observation.images.cam_right_wrist":           [-10, -5, -2, 0],
+    #     "observation.state.left_arm":                   [-4, -2, 0],
+    #     "observation.state.right_arm":                  [-4, -2, 0],
+    #     # "observation.state.left_ee_pose_gripper_base":  [-4, -2, 0],
+    #     # "observation.state.right_ee_pose_gripper_base": [-4, -2, 0],
+    #     "observation.state.left_gripper":               [-4, -2, 0],
+    #     "observation.state.right_gripper":              [-4, -2, 0],
+    #     # "observation.state.lower_body":                 [-4, -2, 0],
+    # }
     # 要求客户端在发送前把这些图像 key 调整到 [height, width]；每个 key 也必须出现在
     # OBS_DELTA_INDICES 中。未写入该映射的图像 key 会按数据集原始分辨率发送。
     IMAGE_RESIZE = {
         "observation.images.cam_left_high":  [480, 640],
         "observation.images.cam_left_wrist": [480, 640],
         "observation.images.cam_right_wrist": [480, 640],
+    }
+    # README 评测 key -> 数据集 / 模型训练 key。评测协议沿用通用相机命名，
+    # 训练数据集里使用的是 LeRobot 数据集自己的相机命名。
+    OBSERVATION_KEY_MAP = {
+        "observation.images.cam_left_high": "observation.images.head_stereo_left",
+        "observation.images.cam_left_wrist": "observation.images.wrist_left",
+        "observation.images.cam_right_wrist": "observation.images.wrist_right",
     }
 
     def __init__(self):

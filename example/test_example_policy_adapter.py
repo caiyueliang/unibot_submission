@@ -27,7 +27,7 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
         }
 
     def test_metadata_declares_only_pi05_runtime_observation_keys(self):
-        data_keys = set(self.policy.metadata["data_keys"])
+        data_keys = set(self.policy.metadata["obs_delta_indices"])
 
         self.assertNotIn("observation.state.left_ee_pose_gripper_base", data_keys)
         self.assertNotIn("observation.state.right_ee_pose_gripper_base", data_keys)
