@@ -22,7 +22,7 @@ from example_env import ActionError, ExampleEnv
 from policy.web_policy import RemotePolicy
 
 
-def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
+def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 31) -> None:
     """连接服务端，并执行 n_steps 次 ``get_action -> env.step`` 校验循环。"""
     print(f"Connecting to {uri} ...")
     client = RemotePolicy(host=uri)
@@ -48,7 +48,7 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
     for i in range(n_steps):
         t0 = time.perf_counter()
         action = client.get_action(obs)
-        print(f"[step {i}] obs: {obs} get_action: {action}")
+        # print(f"[step {i}] obs: {obs} get_action: {action}")
         dt_ms = (time.perf_counter() - t0) * 1e3
         latencies_ms.append(dt_ms)
         try:
