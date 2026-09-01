@@ -67,6 +67,24 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
         np.testing.assert_allclose(action["action.left_arm"][0], self.obs["observation.state.left_arm"][-1])
         np.testing.assert_allclose(action["action.right_arm"][0], self.obs["observation.state.right_arm"][-1])
 
+    def test_get_action_logs_every_30_frames_without_images(self):
+        with self.assertLogs(level="INFO") as logs:
+            self.policy.get_action(self.obs)
+        first_log = "\n".join(logs.output)
+        self.assertIn("step=0", first_log)
+        self.assertIn("observation.state.left_arm", first_log)
+        self.assertIn("action.left_arm", first_log)
+        self.assertNotIn("observation.images", first_log)
+        self.assertNotIn("dev-token", first_log)
+
+        with self.assertNoLogs(level="INFO"):
+            self.policy.get_action(self.obs)
+
+        self.policy._step = 30
+        with self.assertLogs(level="INFO") as logs:
+            self.policy.get_action(self.obs)
+        self.assertIn("step=30", "\n".join(logs.output))
+
     def test_requires_repo_id_when_policy_path_is_set(self):
         os.environ["UNIBOT_POLICY_PATH"] = "/tmp/pretrained_model"
         os.environ.pop("UNIBOT_REPO_ID", None)

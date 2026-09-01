@@ -11,12 +11,14 @@
 
 import os
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
 CONTROL_SPACES = ("joint", "ee")
+LOG = logging.getLogger(__name__)
 
 
 class ExamplePolicy:
@@ -116,10 +118,49 @@ class ExamplePolicy:
         时，把 ``_predict_model_action`` 替换成自己的推理逻辑即可；该方法前后会负责
         key 映射、shape/dtype 归一化，以及令牌注入。
         """
+        step = self._step
         self._step += 1
         model_obs = self._adapt_observation(obs)
         model_action = self._predict_model_action(model_obs)
-        return self._adapt_action(model_action, obs)
+        action = self._adapt_action(model_action, obs)
+        self._log_request_and_action(step, obs, action)
+        return action
+
+    def _log_request_and_action(self, step, obs, action):
+        """从第 0 帧开始每隔 30 帧打印一次非图像观测和输出动作。"""
+        if step % 30 != 0:
+            return
+        safe_obs = {
+            key: self._summarize_log_value(value)
+            for key, value in obs.items()
+            if not key.startswith("observation.images.")
+        }
+        safe_action = {
+            key: "<hidden>" if key == "meta.token" else self._summarize_log_value(value)
+            for key, value in action.items()
+        }
+        LOG.info("step=%s observation_without_images=%s action=%s", step, safe_obs, safe_action)
+
+    @staticmethod
+    def _summarize_log_value(value):
+        """把日志值整理成可读的小对象，避免大数组刷屏。"""
+        if isinstance(value, np.ndarray):
+            summary = {
+                "shape": tuple(value.shape),
+                "dtype": str(value.dtype),
+            }
+            if value.size <= 64:
+                summary["value"] = value.tolist()
+            elif np.issubdtype(value.dtype, np.number):
+                summary.update(
+                    {
+                        "min": float(np.min(value)),
+                        "max": float(np.max(value)),
+                        "mean": float(np.mean(value)),
+                    }
+                )
+            return summary
+        return value
 
     def _adapt_observation(self, obs):
         """把 README observation key 转成模型训练时使用的数据集特征 key。"""
