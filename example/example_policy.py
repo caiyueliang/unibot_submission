@@ -47,8 +47,9 @@ class ExamplePolicy:
     # 要求客户端在发送前把这些图像 key 调整到 [height, width]；每个 key 也必须出现在
     # OBS_DELTA_INDICES 中。未写入该映射的图像 key 会按数据集原始分辨率发送。
     IMAGE_RESIZE = {
-        "observation.images.cam_left_high":  [240, 320],
-        "observation.images.cam_left_wrist": [128, 128],
+        "observation.images.cam_left_high":  [480, 640],
+        "observation.images.cam_left_wrist": [480, 640],
+        "observation.images.cam_right_wrist": [480, 640],
     }
 
     def __init__(self):
@@ -64,8 +65,8 @@ class ExamplePolicy:
         self._device = None
         self._use_amp = False
         self._model_enabled = False
-        self.OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", str(self.OBS_CHUNK_SIZE)))
-        self.ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", str(self.ACTION_CHUNK_SIZE)))
+        self.OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", self.OBS_CHUNK_SIZE))
+        self.ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", self.ACTION_CHUNK_SIZE))
         # 示例内部状态：记录 get_action 被调用次数。真实模型可替换成自己的回合状态。
         self._step = 0
         if self._token is None:
