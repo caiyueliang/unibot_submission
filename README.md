@@ -252,6 +252,54 @@ Install the dependencies into the Python environment used for this submission:
 pip install -r requirements.txt   # numpy, msgpack, websockets, Pillow
 ```
 
+### Docker Image
+
+The repository root includes a `Dockerfile`. The image starts the inference
+server by default and does not include model weights or datasets. Build it with:
+
+```bash
+docker build -t twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 .
+```
+
+The default build installs only the service protocol and local fallback policy
+dependencies, so the container can start the server directly. To preinstall the
+PI0.5/LeRobot inference dependencies inside the image, build with:
+
+```bash
+docker build \
+  --build-arg INSTALL_INFERENCE_DEPS=true \
+  -t twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 .
+```
+
+At runtime, mount the model, dataset, and LeRobot source tree, then point the
+service at those paths through environment variables:
+
+```bash
+docker run --rm --gpus all \
+  -p 8765:8765 \
+  -e UNIBOT_SUBMISSION_TOKEN="123456" \
+  -e UNIBOT_POLICY_PATH=/models/pi05 \
+  -e UNIBOT_REPO_ID=/datasets/G1_Dex1_ArrangeTestTubes_3cams \
+  -e UNIBOT_CONTROL_SPACE=joint \
+  -e UNIBOT_SERVER_PORT=8765 \
+  -v /data/ckpt/pi05_all/042000/pretrained_model:/models/pi05:ro \
+  -v /data/datasets/G1_Dex1_ArrangeTestTubes_3cams:/datasets/G1_Dex1_ArrangeTestTubes_3cams:ro \
+  -v /home/wair/caiyueliang/lerobot:/opt/lerobot:ro \
+  -v /home/wair/caiyueliang/unitree_lerobot:/opt/unitree_lerobot:ro \
+  -v /home/wair/yangsheng/xr_teleoperate/teleop/teleimager:/opt/teleimager:ro \
+  -v unibot_hf_cache:/cache/huggingface \
+  twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0
+```
+
+The same image also includes the local validation client:
+
+```bash
+docker run --rm --network host \
+  -e UNIBOT_SUBMISSION_TOKEN="123456" \
+  twr.wair.ac.cn/taichu-studio/unibot_submission:1.0.0 \
+  python client.py ws://127.0.0.1:8765
+```
+
 ### Workflow
 
 Local verification is done uniformly through `run_server.py` + `run_client.py`:
@@ -264,7 +312,7 @@ evaluator. The token must match on both ends.
    the full evaluation flow:
    ```bash
    # Terminal A
-   UNIBOT_SUBMISSION_TOKEN=dev-token UNIBOT_CONTROL_SPACE=joint python example/run_server.py 8765
+   UNIBOT_SUBMISSION_TOKEN=dev-token UNIBOT_CONTROL_SPACE=joint UNIBOT_SERVER_PORT=8765 python example/run_server.py
 
    # Terminal B
    UNIBOT_SUBMISSION_TOKEN=dev-token python example/run_client.py
@@ -298,9 +346,9 @@ evaluator. The token must match on both ends.
    `8765`–`8767`, one instance each:
 
    ```bash
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8765
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8766
-   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> python example/run_server.py 8767
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8765 python example/run_server.py
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8766 python example/run_server.py
+   UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=<joint|ee> UNIBOT_SERVER_PORT=8767 python example/run_server.py
    ```
 
    The trailing number is the port that instance listens on. These instances may
