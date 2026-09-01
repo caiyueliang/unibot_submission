@@ -3,8 +3,8 @@
 评测端使用 ``README.zh.md`` 中定义的 observation/action key；训练数据集
 ``G1_Dex1_ArrangeTestTubes_3cams`` 使用另一组相机 key。本文件把这层差异收在
 ``ExamplePolicy`` 内部：服务 metadata 和返回动作仍完全遵守 README，真实模型只需要
-接收 ``_adapt_observation`` 产出的 dataset-style observation，并从
-``_predict_model_action`` 返回 dataset-style action。
+接收 ``_adapt_observation`` 产出的数据集格式 observation，并从
+``_predict_model_action`` 返回数据集格式 action。
 
     UNIBOT_SUBMISSION_TOKEN=<token> UNIBOT_CONTROL_SPACE=joint|ee
 """
@@ -20,19 +20,17 @@ CONTROL_SPACES = ("joint", "ee")
 
 
 class ExamplePolicy:
-    """可运行的 policy 适配层；token 和 control_space 从环境变量读取。"""
+    """可运行的策略适配层；令牌和控制空间从环境变量读取。"""
 
     ACTION_CHUNK_SIZE = 1
     OBS_CHUNK_SIZE = 1
-    # Per-key temporal stacking: obs_delta_indices[key][i] is frame i's offset
-    # from the current step, so a key's observation carries len(value) stacked
-    # frames. Its keys also select which observations are sent — declare only
-    # the observations the model consumes. Offsets are <= 0 and strictly
-    # increasing, so index 0 is the oldest frame and the last index is the
-    # newest; e.g. [-4, -2, 0] stacks the frames at t-4, t-2 and the current
-    # step t, and [0] is a single current frame. Non-contiguous spacing such as
-    # [-10, -5, -2, 0] is allowed. `observation.language` is a scalar string
-    # with no time axis, so its offset must be exactly [0].
+    # 按 key 配置时间维堆叠：obs_delta_indices[key][i] 表示第 i 帧相对当前步的偏移，
+    # 因此某个 key 的观测会携带 len(value) 帧堆叠数据。这里的 key 也决定
+    # 客户端会发送哪些观测，只声明模型实际消费的观测即可。偏移量必须小于等于
+    # 0 且严格递增，所以索引 0 是最老的一帧，最后一个索引是最新帧；例如 [-4, -2, 0]
+    # 表示堆叠 t-4、t-2 和当前 t 步的帧，[0] 表示只取当前帧。允许 [-10, -5, -2, 0]
+    # 这种非连续采样间隔。`observation.language` 是没有时间轴的标量字符串，所以偏移量
+    # 必须正好是 [0]。
     OBS_DELTA_INDICES = {
         "observation.language":                         [0],
         "observation.images.cam_left_high":             [-10, -5, -2, 0],
@@ -46,16 +44,15 @@ class ExamplePolicy:
         "observation.state.right_gripper":              [-4, -2, 0],
         "observation.state.lower_body":                 [-4, -2, 0],
     }
-    # Ask the client to resize these image keys to [height, width] before
-    # sending them; each key must also appear in OBS_DELTA_INDICES. Image keys
-    # left out of this map are delivered at their native catalog resolution.
+    # 要求客户端在发送前把这些图像 key 调整到 [height, width]；每个 key 也必须出现在
+    # OBS_DELTA_INDICES 中。未写入该映射的图像 key 会按数据集原始分辨率发送。
     IMAGE_RESIZE = {
         "observation.images.cam_left_high":  [240, 320],
         "observation.images.cam_left_wrist": [128, 128],
     }
 
     def __init__(self):
-        """从环境变量读取提交 token 和控制空间；二者都是必填项。"""
+        """从环境变量读取提交令牌和控制空间；二者都是必填项。"""
         self._token = os.environ.get("UNIBOT_SUBMISSION_TOKEN")
         self._control_space = os.environ.get("UNIBOT_CONTROL_SPACE", "joint")
         self._policy_path = os.environ.get("UNIBOT_POLICY_PATH")
@@ -69,7 +66,7 @@ class ExamplePolicy:
         self._model_enabled = False
         self.OBS_CHUNK_SIZE = int(os.environ.get("UNIBOT_OBS_CHUNK_SIZE", str(self.OBS_CHUNK_SIZE)))
         self.ACTION_CHUNK_SIZE = int(os.environ.get("UNIBOT_ACTION_CHUNK_SIZE", str(self.ACTION_CHUNK_SIZE)))
-        # 示例内部状态：记录 get_action 被调用次数。真实模型可替换成自己的 episode 状态。
+        # 示例内部状态：记录 get_action 被调用次数。真实模型可替换成自己的回合状态。
         self._step = 0
         if self._token is None:
             raise ValueError("UNIBOT_SUBMISSION_TOKEN is required")
@@ -92,11 +89,11 @@ class ExamplePolicy:
         }
 
     def get_action(self, obs):
-        """根据当前控制空间返回一段动作 chunk。
+        """根据当前控制空间返回一段动作片段。
 
-        参数 ``obs`` 是评测端传来的观测字典，key 与 ``DATA_KEYS`` 对应。接入真实模型
+        参数 ``obs`` 是评测端传来的观测字典，key 与 metadata 声明对应。接入真实模型
         时，把 ``_predict_model_action`` 替换成自己的推理逻辑即可；该方法前后会负责
-        key 映射、shape/dtype 归一化，以及 token 注入。
+        key 映射、shape/dtype 归一化，以及令牌注入。
         """
         self._step += 1
         model_obs = self._adapt_observation(obs)
@@ -104,7 +101,7 @@ class ExamplePolicy:
         return self._adapt_action(model_action, obs)
 
     def _adapt_observation(self, obs):
-        """把 README observation key 转成模型训练时使用的 dataset feature key。"""
+        """把 README observation key 转成模型训练时使用的数据集特征 key。"""
         model_obs = {}
         for key, value in obs.items():
             model_key = self.OBSERVATION_KEY_MAP.get(key, key)
@@ -130,7 +127,7 @@ class ExamplePolicy:
         }
 
     def _load_model(self):
-        """按 ``eval_g1.py`` 的最小链路加载 LeRobot policy 和 processors。"""
+        """按 ``eval_g1.py`` 的最小链路加载 LeRobot 策略和处理器。"""
         import torch
         from lerobot.configs.policies import PreTrainedConfig
         from lerobot.policies.factory import make_policy, make_pre_post_processors
@@ -175,7 +172,7 @@ class ExamplePolicy:
 
     @staticmethod
     def _load_dataset_meta(repo_id):
-        """只读取 LeRobot meta/info.json 和 stats.json，避免加载数据帧/episodes。"""
+        """只读取 LeRobot meta/info.json 和 stats.json，避免加载数据帧或回合数据。"""
         meta_dir = Path(repo_id) / "meta"
         with (meta_dir / "info.json").open("r", encoding="utf-8") as f:
             info = json.load(f)
@@ -184,7 +181,7 @@ class ExamplePolicy:
         return SimpleNamespace(features=info["features"], stats=stats)
 
     def _predict_with_model(self, model_obs):
-        """运行 LeRobot policy，并拆成 dataset-style action dict。"""
+        """运行 LeRobot 策略，并拆成数据集格式的 action 字典。"""
         import torch
         from contextlib import nullcontext
 
@@ -235,7 +232,7 @@ class ExamplePolicy:
         return prepared, task
 
     def _split_model_action_vector(self, action):
-        """把 PI0.5 16 维动作向量或动作 chunk 拆回 split action keys。"""
+        """把 PI0.5 16 维动作向量或动作片段拆回拆分后的 action key。"""
         if hasattr(action, "detach"):
             action = action.detach().cpu().numpy()
         array = np.asarray(action, dtype=np.float32)
@@ -262,7 +259,7 @@ class ExamplePolicy:
         raise ValueError(f"unsupported model action shape {array.shape}")
 
     def _adapt_action(self, model_action, obs):
-        """把模型输出整理成 README 要求的动作 dict。"""
+        """把模型输出整理成 README 要求的动作字典。"""
         action = {
             "meta.token": self._token,
             "action.left_gripper": self._chunk_action(
@@ -300,7 +297,7 @@ class ExamplePolicy:
         return action
 
     def _latest_or_zeros(self, values, key, dim):
-        """取 observation chunk 最新帧；缺失时返回单帧零动作。"""
+        """取 observation 片段中的最新帧；缺失时返回单帧零动作。"""
         value = values.get(key)
         if value is None:
             return np.zeros((dim,), dtype=np.float32)
@@ -321,13 +318,13 @@ class ExamplePolicy:
 
     @staticmethod
     def _to_torch_tensor(value):
-        """延迟导入 torch，把 numpy/Python 值转为 tensor。"""
+        """延迟导入 torch，把 numpy/Python 值转为张量。"""
         import torch
 
         return torch.as_tensor(value)
 
     def _chunk_action(self, value, dim, fallback=None):
-        """把单帧或 chunk 动作归一化为 ``(ACTION_CHUNK_SIZE, dim)``。"""
+        """把单帧或动作片段归一化为 ``(ACTION_CHUNK_SIZE, dim)``。"""
         if value is None:
             value = np.zeros((dim,), dtype=np.float32) if fallback is None else fallback
         array = np.asarray(value, dtype=np.float32)
@@ -344,6 +341,6 @@ class ExamplePolicy:
         return np.concatenate([array, pad], axis=0)
 
     def reset(self):
-        """清空每个 episode 级别的状态。"""
+        """清空每个回合级别的状态。"""
         self._step = 0
         return {"ok": True}
