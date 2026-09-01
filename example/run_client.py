@@ -47,7 +47,7 @@ def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
     for i in range(n_steps):
         t0 = time.perf_counter()
         action = client.get_action(obs)
-        print(f"[step {i}] get_action: {action}")
+        # print(f"[step {i}] get_action: {action}")
         dt_ms = (time.perf_counter() - t0) * 1e3
         latencies_ms.append(dt_ms)
         try:
