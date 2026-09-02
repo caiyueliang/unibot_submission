@@ -147,6 +147,92 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
         np.testing.assert_allclose(action["action.left_arm"], np.full((1, 7), 2.0, dtype=np.float32))
         np.testing.assert_allclose(action["action.right_arm"], np.full((1, 7), -2.0, dtype=np.float32))
 
+    def test_real_sample_action_safety_clip_output(self):
+        class RealSamplePolicy(ExamplePolicy):
+            def _predict_model_action(self, model_obs):
+                return {
+                    "action.left_gripper": np.array([[4.030442714691162]], dtype=np.float32),
+                    "action.right_gripper": np.array([[2.6583504676818848]], dtype=np.float32),
+                    "action.pivot": np.zeros((1, 7), dtype=np.float32),
+                    "action.left_arm": np.array(
+                        [[
+                            -0.08698493242263794,
+                            0.48088252544403076,
+                            -0.042104050517082214,
+                            -0.4055706262588501,
+                            -0.37599074840545654,
+                            0.2420746237039566,
+                            -0.7427308559417725,
+                        ]],
+                        dtype=np.float32,
+                    ),
+                    "action.right_arm": np.array(
+                        [[
+                            -1.0320369005203247,
+                            -0.8419457077980042,
+                            0.31322041153907776,
+                            0.5841830372810364,
+                            -0.21033702790737152,
+                            0.5849776864051819,
+                            1.2433329820632935,
+                        ]],
+                        dtype=np.float32,
+                    ),
+                }
+
+        obs = {
+            "observation.language": "Place the test tubes neatly back into the test tube rack.",
+            "observation.state.left_arm": np.array(
+                [[
+                    0.31828904151916504,
+                    0.38898399472236633,
+                    0.2698008716106415,
+                    0.038217693567276,
+                    -0.3668491244316101,
+                    -0.11712183058261871,
+                    -0.698979914188385,
+                ]],
+                dtype=np.float32,
+            ),
+            "observation.state.right_arm": np.array(
+                [[
+                    0.3583642840385437,
+                    -0.3616359829902649,
+                    -0.31354328989982605,
+                    0.04164518415927887,
+                    0.364656001329422,
+                    -0.12902216613292694,
+                    0.70981365442276,
+                ]],
+                dtype=np.float32,
+            ),
+            "observation.state.left_gripper": np.array([[4.20970344543457]], dtype=np.float32),
+            "observation.state.right_gripper": np.array([[4.173340320587158]], dtype=np.float32),
+        }
+
+        raw_action = RealSamplePolicy()._predict_model_action({})
+        action = RealSamplePolicy().get_action(obs)
+
+        print("\n[real sample action safety clip]")
+        for action_key, obs_key in (
+            ("action.left_arm", "observation.state.left_arm"),
+            ("action.right_arm", "observation.state.right_arm"),
+            ("action.left_gripper", "observation.state.left_gripper"),
+            ("action.right_gripper", "observation.state.right_gripper"),
+        ):
+            raw_delta = raw_action[action_key][0] - obs[obs_key][0]
+            clipped_delta = action[action_key][0] - obs[obs_key][0]
+            print(f"{action_key} raw_action={raw_action[action_key]}")
+            print(f"{action_key} raw_delta={raw_delta}")
+            print(f"{action_key} clipped_action={action[action_key]}")
+            print(f"{action_key} clipped_delta={clipped_delta}")
+            print(f"{action_key} max_abs_clipped_delta={np.max(np.abs(clipped_delta)):.6f}")
+
+        self.assertLessEqual(np.max(np.abs(action["action.left_arm"][0] - obs["observation.state.left_arm"][0])), 0.120001)
+        self.assertLessEqual(np.max(np.abs(action["action.right_arm"][0] - obs["observation.state.right_arm"][0])), 0.120001)
+        self.assertLessEqual(np.max(np.abs(action["action.left_gripper"][0] - obs["observation.state.left_gripper"][0])), 0.200001)
+        self.assertLessEqual(np.max(np.abs(action["action.right_gripper"][0] - obs["observation.state.right_gripper"][0])), 0.200001)
+
     def test_rejects_invalid_action_safety_environment(self):
         os.environ["UNIBOT_ENABLE_ACTION_SAFETY"] = "maybe"
         with self.assertRaisesRegex(ValueError, "UNIBOT_ENABLE_ACTION_SAFETY"):

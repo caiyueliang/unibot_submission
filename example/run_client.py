@@ -22,7 +22,7 @@ from example_env import ActionError, ExampleEnv
 from policy.web_policy import RemotePolicy
 
 
-def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 3000) -> None:
+def main(uri: str = "ws://127.0.0.1:8765", n_steps: int = 5) -> None:
     """连接服务端，并执行 n_steps 次 ``get_action -> env.step`` 校验循环。"""
     print(f"Connecting to {uri} ...")
     client = RemotePolicy(host=uri)
