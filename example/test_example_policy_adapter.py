@@ -210,7 +210,7 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
             "observation.state.right_gripper": np.array([[4.173340320587158]], dtype=np.float32),
         }
 
-        raw_action = RealSamplePolicy()._predict_model_action({})
+        predicted_action = RealSamplePolicy()._predict_model_action({})
         action = RealSamplePolicy().get_action(obs)
 
         print("\n[real sample action safety clip]")
@@ -220,10 +220,11 @@ class ExamplePolicyAdapterTest(unittest.TestCase):
             ("action.left_gripper", "observation.state.left_gripper"),
             ("action.right_gripper", "observation.state.right_gripper"),
         ):
-            raw_delta = raw_action[action_key][0] - obs[obs_key][0]
+            # raw_delta = predicted_action[action_key][0] - obs[obs_key][0]
             clipped_delta = action[action_key][0] - obs[obs_key][0]
-            print(f"{action_key} raw_action={raw_action[action_key]}")
-            print(f"{action_key} raw_delta={raw_delta}")
+            print(f"{action_key} obs={obs[obs_key]}")
+            print(f"{action_key} predicted_action={predicted_action[action_key]}")
+            # print(f"{action_key} raw_delta={raw_delta}")
             print(f"{action_key} clipped_action={action[action_key]}")
             print(f"{action_key} clipped_delta={clipped_delta}")
             print(f"{action_key} max_abs_clipped_delta={np.max(np.abs(clipped_delta)):.6f}")
