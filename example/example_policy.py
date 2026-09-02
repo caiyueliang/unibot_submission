@@ -22,7 +22,7 @@ CONTROL_SPACES = ("joint", "ee")
 LOG = logging.getLogger(__name__)
 DEFAULT_ENABLE_ACTION_SAFETY = True
 DEFAULT_MAX_JOINT_DELTA = 0.06
-DEFAULT_MAX_GRIPPER_DELTA = 0.2
+DEFAULT_MAX_GRIPPER_DELTA = 0.5
 
 
 class ExamplePolicy:
